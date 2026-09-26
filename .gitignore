@@ -1,0 +1,47 @@
+# Environment files and credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Python environments, caches, coverage and build output
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.ruff_cache/
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+build/
+dist/
+*.egg-info/
+
+# Local databases, runtime data and user uploads
+*.sqlite3
+uploads/
+upload/
+preview_runtime/
+preview_uploads/
+staticfiles/
+*.log
+logs/
+
+# Dependency, archive and temporary output
+node_modules/
+*.zip
+*.tmp
+*.temp
+*.swp
+*~
+
+# IDE, OS and local agent state
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+.codex/
