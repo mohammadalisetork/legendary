@@ -3,7 +3,7 @@ from django import forms
 from django.conf import settings
 from django.contrib.auth.forms import AuthenticationForm
 from django.utils import timezone
-from .models import Attachment, Request, ServiceFormField
+from .models import Attachment, Category, Department, Request, RoleAssignment, Service, ServiceFormField, User
 
 class LoginForm(AuthenticationForm):
     username=forms.CharField(label="نام کاربری",widget=forms.TextInput(attrs={"autofocus":True,"autocomplete":"username"}))
@@ -100,3 +100,81 @@ class ManagerActionForm(forms.Form):
 def save_upload(req,user,file,response=None):
     if not file:return None
     return Attachment.objects.create(request=req,uploaded_by=user,file=file,original_name=file.name,size=file.size,content_type=getattr(file,"content_type","")[:120],response=response)
+
+
+class DepartmentForm(forms.ModelForm):
+    class Meta:
+        model=Department
+        fields=["code","name","short_name","description","intro_text","display_order"]
+        labels={"code":"کد پایدار","name":"نام اداره","short_name":"نام کوتاه","description":"توضیح کوتاه","intro_text":"متن معرفی","display_order":"ترتیب نمایش"}
+        widgets={"description":forms.Textarea(attrs={"rows":3}),"intro_text":forms.Textarea(attrs={"rows":4})}
+
+    def __init__(self,*args,**kwargs):
+        super().__init__(*args,**kwargs)
+        if self.instance.pk:
+            self.fields["code"].disabled=True
+
+
+class DepartmentLifecycleForm(forms.Form):
+    status=forms.ChoiceField(label="وضعیت مقصد",choices=Department.Status.choices)
+
+    def __init__(self,*args,department=None,actor=None,**kwargs):
+        from .policies import is_super_admin
+        super().__init__(*args,**kwargs)
+        allowed={
+            Department.Status.DRAFT:{Department.Status.PUBLISHED},
+            Department.Status.PUBLISHED:{Department.Status.DISABLED,Department.Status.ARCHIVED},
+            Department.Status.DISABLED:{Department.Status.PUBLISHED,Department.Status.ARCHIVED},
+            Department.Status.ARCHIVED:set(),
+        }.get(department.status,set())
+        if not is_super_admin(actor): allowed.discard(Department.Status.ARCHIVED)
+        self.fields["status"].choices=[item for item in Department.Status.choices if item[0] in allowed]
+        self.department=department
+
+    def clean_status(self):
+        status=self.cleaned_data["status"]
+        if status==Department.Status.PUBLISHED and not self.department.service_families.filter(active=True,services__active=True).exists():
+            raise forms.ValidationError("برای انتشار، حداقل یک خانواده و خدمت فعال لازم است.")
+        return status
+
+
+class DepartmentMembershipForm(forms.Form):
+    user=forms.ModelChoiceField(label="کاربر",queryset=User.objects.none())
+    role=forms.ChoiceField(label="نقش",choices=())
+
+    def __init__(self,*args,actor=None,**kwargs):
+        from .policies import is_super_admin
+        super().__init__(*args,**kwargs)
+        self.fields["user"].queryset=User.objects.filter(is_active=True).order_by("full_name","username")
+        roles=[RoleAssignment.Role.REQUEST_MANAGER]
+        if is_super_admin(actor): roles.append(RoleAssignment.Role.DEPARTMENT_LEAD)
+        self.fields["role"].choices=[item for item in RoleAssignment.Role.choices if item[0] in roles]
+
+
+class ServiceFamilyForm(forms.ModelForm):
+    class Meta:
+        model=Category
+        fields=["name","slug","description","display_order","active"]
+        labels={"name":"نام خانواده خدمت","slug":"شناسه نشانی","description":"توضیح","display_order":"ترتیب نمایش","active":"فعال"}
+        widgets={"description":forms.Textarea(attrs={"rows":3})}
+
+
+class ServiceManagementForm(forms.ModelForm):
+    class Meta:
+        model=Service
+        fields=["code","name","category","domain","short_description","full_description","purpose","scope","deliverables","required_inputs","default_owner","initial_response_days","delivery_min_days","delivery_max_days","supports_desired_date","active","display_order"]
+        labels={"category":"خانواده خدمت","active":"فعال","display_order":"ترتیب نمایش"}
+        widgets={name:forms.Textarea(attrs={"rows":3}) for name in ["short_description","full_description","purpose","scope","deliverables","required_inputs"]}
+
+    def __init__(self,*args,department=None,**kwargs):
+        from .policies import eligible_owners
+        super().__init__(*args,**kwargs)
+        self.department=department
+        self.fields["category"].queryset=department.service_families.all()
+        self.fields["default_owner"].queryset=eligible_owners(department)
+
+    def clean_category(self):
+        category=self.cleaned_data["category"]
+        if category.department_id!=self.department.pk:
+            raise forms.ValidationError("خانواده خدمت باید متعلق به همین اداره باشد.")
+        return category

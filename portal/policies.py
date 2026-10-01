@@ -96,6 +96,21 @@ def department_ids_for_role(user, role):
     return ids
 
 
+def authorized_departments(user, *, operational=False):
+    """Departments visible in a scoped workspace; never use this as the only mutation guard."""
+    if not getattr(user, "is_authenticated", False) or not user.is_active:
+        return Department.objects.none()
+    if is_super_admin(user) or has_global_role(user, RoleAssignment.Role.SUPERVISOR):
+        queryset = Department.objects.all()
+        return queryset.exclude(status=Department.Status.ARCHIVED) if operational else queryset
+    ids = (
+        department_ids_for_role(user, RoleAssignment.Role.REQUEST_MANAGER)
+        | department_ids_for_role(user, RoleAssignment.Role.DEPARTMENT_LEAD)
+    )
+    queryset = Department.objects.filter(pk__in=ids)
+    return queryset.exclude(status=Department.Status.ARCHIVED) if operational else queryset
+
+
 def _manager_can_operate_request(user, request_obj):
     if not has_department_role(user, RoleAssignment.Role.REQUEST_MANAGER, request_obj.department_id):
         return False
@@ -154,6 +169,18 @@ def can(user, action, resource=None, department=None):
         )
     if action == Action.DASHBOARD_EXECUTIVE:
         return has_global_role(user, RoleAssignment.Role.EXECUTIVE_VIEWER)
+    if action == Action.DEPARTMENT_MANAGE:
+        return bool(target_department and has_department_role(
+            user, RoleAssignment.Role.DEPARTMENT_LEAD, target_department
+        ))
+    if action == Action.CATALOGUE_MANAGE:
+        return bool(target_department and has_department_role(
+            user, RoleAssignment.Role.DEPARTMENT_LEAD, target_department
+        ))
+    if action == Action.ROLE_MANAGE:
+        return bool(target_department and has_department_role(
+            user, RoleAssignment.Role.DEPARTMENT_LEAD, target_department
+        ))
     if action in {Action.DEPARTMENT_VIEW, Action.CATALOGUE_VIEW}:
         return True
     return False

@@ -3,16 +3,18 @@ from django.contrib.auth import update_session_auth_hash
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.views import LoginView
 from django.contrib.auth.forms import PasswordChangeForm
+from django.core.exceptions import PermissionDenied
 from django.db import connection, transaction
-from django.db.models import Count, Q
+from django.db.models import Count, Prefetch, Q
 from django.http import FileResponse, Http404, JsonResponse
 from django.core.paginator import Paginator
 from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse
 from django.utils import timezone
 from django.views.decorators.http import require_POST
-from .forms import InternalNoteForm, LoginForm, ManagerActionForm, MessageForm, RequestBaseForm, request_readiness_errors, save_upload
+from .forms import DepartmentForm, DepartmentLifecycleForm, DepartmentMembershipForm, InternalNoteForm, LoginForm, ManagerActionForm, MessageForm, RequestBaseForm, ServiceFamilyForm, ServiceManagementForm, request_readiness_errors, save_upload
 from .models import Attachment, Category, Department, InternalNote, LoginThrottle, Notification, Request, RequestResponse, RoleAssignment, Service, User
-from .policies import Action, can, can_access_control, is_super_admin, request_scope
+from .policies import Action, authorized_departments, can, can_access_control, department_ids_for_role, is_super_admin, request_scope
 from .utils import apply_submission_timing, audit, history, notify, transition
 
 class PortalLoginView(LoginView):
@@ -54,8 +56,28 @@ def fa_digits(v): return str(v).translate(str.maketrans("0123456789","۰۱۲۳۴
 @login_required
 def home(request):
     own=Request.objects.filter(requester=request.user).exclude(status=Request.Status.DRAFT)
-    categories=Category.objects.filter(active=True,department__status=Department.Status.PUBLISHED).annotate(service_count=Count("services",filter=Q(services__active=True)))
+    categories=Category.objects.filter(active=True,department__status=Department.Status.PUBLISHED).select_related("department").annotate(service_count=Count("services",filter=Q(services__active=True)))
     return render(request,"portal/home.html",{"recent":own[:5],"action_required":own.filter(needs_user_action=True)[:5],"categories":categories,"draft_count":Request.objects.filter(requester=request.user,status=Request.Status.DRAFT).count()})
+
+@login_required
+def service_hub(request):
+    departments=Department.objects.filter(status=Department.Status.PUBLISHED).annotate(
+        family_count=Count("service_families",filter=Q(service_families__active=True),distinct=True),
+        service_count=Count("service_families__services",filter=Q(service_families__active=True,service_families__services__active=True),distinct=True),
+    )
+    q=request.GET.get("q","").strip()
+    if q:
+        departments=departments.filter(Q(name__icontains=q)|Q(short_name__icontains=q)|Q(description__icontains=q)|Q(service_families__services__name__icontains=q)|Q(service_families__services__code__icontains=q)).distinct()
+    return render(request,"portal/service_hub.html",{"departments":departments,"q":q,"breadcrumbs":[{"label":"مرکز خدمات"}]})
+
+@login_required
+def department_landing(request,code):
+    department=get_object_or_404(Department,code=code,status=Department.Status.PUBLISHED)
+    families=department.service_families.filter(active=True).prefetch_related(Prefetch("services",queryset=Service.objects.filter(active=True).select_related("category")))
+    q=request.GET.get("q","").strip()
+    if q:
+        families=families.filter(Q(name__icontains=q)|Q(description__icontains=q)|Q(services__active=True,services__name__icontains=q)|Q(services__active=True,services__code__icontains=q)).distinct()
+    return render(request,"portal/department_landing.html",{"department":department,"families":families,"q":q,"breadcrumbs":[{"label":"مرکز خدمات","href":reverse("service_hub")},{"label":str(department)}]})
 
 @login_required
 def catalog(request):
@@ -67,8 +89,10 @@ def catalog(request):
 
 @login_required
 def service_detail(request,pk):
-    service=get_object_or_404(Service.objects.select_related("category__department","default_owner"),pk=pk,active=True,category__active=True,category__department__status=Department.Status.PUBLISHED)
-    return render(request,"portal/service_detail.html",{"service":service})
+    service=get_object_or_404(Service.objects.select_related("category__department","default_owner"),pk=pk)
+    if service.department.status==Department.Status.DRAFT and not can(request.user,Action.CATALOGUE_MANAGE,department=service.department): raise Http404
+    available=service.is_requestable
+    return render(request,"portal/service_detail.html",{"service":service,"available":available,"breadcrumbs":[{"label":"مرکز خدمات","href":reverse("service_hub")},{"label":service.department.name,"href":reverse("department_landing",args=[service.department.code])},{"label":service.category.name},{"label":service.name}]})
 
 @login_required
 def request_create(request,service_id):
@@ -80,7 +104,7 @@ def request_create(request,service_id):
         history(obj,request.user,"REQUEST_CREATED")
         if request.POST.get("action")=="submit": return submit_request(request,obj.pk)
         messages.success(request,"پیش‌نویس ذخیره شد."); return redirect("request_detail",pk=obj.pk)
-    return render(request,"portal/request_form.html",{"service":service,"form":form})
+    return render(request,"portal/request_form.html",{"service":service,"form":form,"breadcrumbs":[{"label":"مرکز خدمات","href":reverse("service_hub")},{"label":service.department.name,"href":reverse("department_landing",args=[service.department.code])},{"label":service.category.name},{"label":service.name,"href":reverse("service_detail",args=[service.pk])},{"label":"ثبت درخواست"}]})
 
 def accessible_request(user,pk,manager=False):
     qs=Request.objects.select_related("department","service__category__department","requester","assigned_owner")
@@ -125,7 +149,7 @@ def submit_request(request,pk):
 
 @login_required
 def my_requests(request):
-    items=Request.objects.filter(requester=request.user).select_related("service","assigned_owner")
+    items=Request.objects.filter(requester=request.user).select_related("department","service","assigned_owner")
     status=request.GET.get("status",""); q=request.GET.get("q","")
     if status: items=items.filter(status=status)
     if q: items=items.filter(Q(public_id__icontains=q)|Q(title__icontains=q)|Q(service__name__icontains=q))
@@ -155,7 +179,7 @@ def attachment_download(request,pk):
 def brief_print(request,pk): return render(request,"portal/brief.html",{"item":accessible_request(request.user,pk,manager=True)},content_type="text/html")
 
 @login_required
-def notifications(request): return render(request,"portal/notifications.html",{"items":request.user.notifications.select_related("request")})
+def notifications(request): return render(request,"portal/notifications.html",{"items":request.user.notifications.select_related("request__department")})
 @login_required
 @require_POST
 def notification_read(request,pk):
@@ -165,8 +189,13 @@ def is_manager(user): return can_access_control(user)
 @login_required
 def control_dashboard(request):
     if not is_manager(request.user): raise Http404
-    qs=manager_scope(request.user); counts={k:qs.filter(status=k).count() for k,_ in Request.Status.choices}
-    return render(request,"control/dashboard.html",{"counts":counts,"recent":qs.exclude(status=Request.Status.DRAFT)[:10],"unassigned":qs.filter(assigned_owner__isnull=True).count(),"overdue":sum(1 for x in qs if x.is_overdue)})
+    departments=authorized_departments(request.user,operational=True)
+    selected=request.GET.get("department","")
+    qs=manager_scope(request.user)
+    if selected:
+        department=get_object_or_404(departments,code=selected); qs=qs.filter(department=department)
+    counts={k:qs.filter(status=k).count() for k,_ in Request.Status.choices}
+    return render(request,"control/dashboard.html",{"counts":counts,"recent":qs.exclude(status=Request.Status.DRAFT)[:10],"unassigned":qs.filter(assigned_owner__isnull=True).count(),"overdue":sum(1 for x in qs if x.is_overdue),"departments":departments,"selected_department":selected})
 
 def manager_scope(user):
     return request_scope(user)
@@ -174,7 +203,11 @@ def manager_scope(user):
 @login_required
 def control_requests(request):
     if not is_manager(request.user): raise Http404
+    departments=authorized_departments(request.user,operational=True)
     qs=manager_scope(request.user).exclude(status=Request.Status.DRAFT); q=request.GET.get("q",""); status=request.GET.get("status",""); priority=request.GET.get("priority",""); owner=request.GET.get("owner","")
+    selected_department=request.GET.get("department","")
+    if selected_department:
+        department=get_object_or_404(departments,code=selected_department); qs=qs.filter(department=department)
     if q: qs=qs.filter(Q(public_id__icontains=q)|Q(title__icontains=q)|Q(requester__full_name__icontains=q)|Q(service__name__icontains=q))
     if status: qs=qs.filter(status=status)
     if priority: qs=qs.filter(priority=priority)
@@ -192,7 +225,7 @@ def control_requests(request):
     page=Paginator(qs,25).get_page(request.GET.get("page"))
     visible_departments=manager_scope(request.user).values_list("department_id",flat=True).distinct()
     owners=User.objects.filter(is_active=True).filter(Q(role__in=[User.Role.REQUEST_MANAGER,User.Role.ADMIN])|Q(role_assignments__department_id__in=visible_departments,role_assignments__role__in=[RoleAssignment.Role.REQUEST_MANAGER,RoleAssignment.Role.DEPARTMENT_LEAD],role_assignments__is_active=True)).distinct()
-    return render(request,"control/requests.html",{"items":page,"page":page,"statuses":Request.Status.choices,"priorities":Request.Priority.choices,"services":Service.objects.filter(active=True,category__department_id__in=visible_departments),"categories":Category.objects.filter(active=True,department_id__in=visible_departments),"owners":owners,"units":User.objects.exclude(organizational_unit="").values_list("organizational_unit",flat=True).distinct()})
+    return render(request,"control/requests.html",{"items":page,"page":page,"statuses":Request.Status.choices,"priorities":Request.Priority.choices,"services":Service.objects.filter(active=True,category__department_id__in=visible_departments),"categories":Category.objects.filter(active=True,department_id__in=visible_departments),"owners":owners,"units":User.objects.exclude(organizational_unit="").values_list("organizational_unit",flat=True).distinct(),"departments":departments,"selected_department":selected_department})
 
 @login_required
 def control_request_detail(request,pk):
@@ -234,3 +267,94 @@ def control_action(request,pk):
 
 @login_required
 def profile(request): return render(request,"portal/profile.html")
+
+
+def _managed_department(user,pk):
+    department=get_object_or_404(Department,pk=pk)
+    if not can(user,Action.DEPARTMENT_MANAGE,department=department): raise PermissionDenied
+    return department
+
+
+@login_required
+def manage_departments(request):
+    if is_super_admin(request.user): departments=Department.objects.all()
+    else: departments=Department.objects.filter(pk__in=department_ids_for_role(request.user,RoleAssignment.Role.DEPARTMENT_LEAD))
+    departments=departments.annotate(
+        family_count=Count("service_families",distinct=True),service_count=Count("service_families__services",distinct=True),member_count=Count("role_assignments",filter=Q(role_assignments__is_active=True),distinct=True)
+    )
+    if not departments.exists() and not is_super_admin(request.user): raise PermissionDenied
+    return render(request,"control/departments.html",{"departments":departments,"can_create":is_super_admin(request.user)})
+
+
+@login_required
+def manage_department_detail(request,pk):
+    department=_managed_department(request.user,pk)
+    families=department.service_families.prefetch_related("services__default_owner")
+    members=department.role_assignments.filter(is_active=True).select_related("user")
+    return render(request,"control/department_detail.html",{"department":department,"families":families,"members":members,"lifecycle_form":DepartmentLifecycleForm(department=department,actor=request.user),"membership_form":DepartmentMembershipForm(actor=request.user),"can_archive":is_super_admin(request.user)})
+
+
+@login_required
+def manage_department_edit(request,pk=None):
+    if pk:
+        department=_managed_department(request.user,pk)
+    else:
+        if not is_super_admin(request.user): raise PermissionDenied
+        department=Department()
+    form=DepartmentForm(request.POST or None,instance=department)
+    if request.method=="POST" and form.is_valid():
+        created=not department.pk; obj=form.save(); audit(request.user,"DEPARTMENT_CREATED" if created else "DEPARTMENT_UPDATED",obj,{"fields":list(form.changed_data)}); messages.success(request,"اطلاعات اداره ذخیره شد."); return redirect("manage_department_detail",pk=obj.pk)
+    return render(request,"control/object_form.html",{"form":form,"title":"ایجاد اداره" if not pk else "ویرایش اداره","department":department if pk else None})
+
+
+@login_required
+@require_POST
+def manage_department_status(request,pk):
+    department=_managed_department(request.user,pk)
+    form=DepartmentLifecycleForm(request.POST,department=department,actor=request.user)
+    if form.is_valid():
+        target=form.cleaned_data["status"]
+        if target==Department.Status.ARCHIVED and not is_super_admin(request.user): raise PermissionDenied
+        old=department.status; department.status=target; department.save(update_fields=["status","updated_at"]); audit(request.user,"DEPARTMENT_STATUS_CHANGED",department,{"from":old,"to":target}); messages.success(request,"وضعیت اداره تغییر کرد.")
+    else: messages.error(request,"تغییر وضعیت انجام نشد: "+" ".join(e for errors in form.errors.values() for e in errors))
+    return redirect("manage_department_detail",pk=pk)
+
+
+@login_required
+@require_POST
+def manage_department_members(request,pk):
+    department=_managed_department(request.user,pk)
+    if not can(request.user,Action.ROLE_MANAGE,department=department): raise PermissionDenied
+    if request.POST.get("remove"):
+        assignment=get_object_or_404(RoleAssignment,pk=request.POST["remove"],department=department,is_active=True)
+        if assignment.role==RoleAssignment.Role.DEPARTMENT_LEAD and not is_super_admin(request.user): raise PermissionDenied
+        assignment.is_active=False; assignment.save(update_fields=["is_active","updated_at"]); audit(request.user,"DEPARTMENT_MEMBERSHIP_REMOVED",assignment,{"department":department.pk,"role":assignment.role}); messages.success(request,"عضویت غیرفعال شد.")
+    else:
+        form=DepartmentMembershipForm(request.POST,actor=request.user)
+        if form.is_valid():
+            assignment,created=RoleAssignment.objects.update_or_create(user=form.cleaned_data["user"],department=department,role=form.cleaned_data["role"],defaults={"scope_type":RoleAssignment.ScopeType.DEPARTMENT,"is_active":True,"assigned_by":request.user})
+            audit(request.user,"DEPARTMENT_MEMBERSHIP_ADDED" if created else "DEPARTMENT_ROLE_CHANGED",assignment,{"department":department.pk,"role":assignment.role}); messages.success(request,"عضویت اداره ذخیره شد.")
+        else: messages.error(request,"عضویت ذخیره نشد.")
+    return redirect("manage_department_detail",pk=pk)
+
+
+@login_required
+def manage_family_edit(request,department_pk=None,pk=None):
+    family=get_object_or_404(Category,pk=pk) if pk else None
+    department=_managed_department(request.user,family.department_id if family else department_pk)
+    if not can(request.user,Action.CATALOGUE_MANAGE,department=department): raise PermissionDenied
+    form=ServiceFamilyForm(request.POST or None,instance=family)
+    if request.method=="POST" and form.is_valid():
+        obj=form.save(False); obj.department=department; obj.save(); audit(request.user,"SERVICE_FAMILY_CREATED" if not family else "SERVICE_FAMILY_UPDATED",obj,{"department":department.pk,"fields":list(form.changed_data)}); messages.success(request,"خانواده خدمت ذخیره شد."); return redirect("manage_department_detail",pk=department.pk)
+    return render(request,"control/object_form.html",{"form":form,"title":"ایجاد خانواده خدمت" if not family else "ویرایش خانواده خدمت","department":department})
+
+
+@login_required
+def manage_service_edit(request,department_pk=None,pk=None):
+    service=get_object_or_404(Service.objects.select_related("category__department"),pk=pk) if pk else None
+    department=_managed_department(request.user,service.department.pk if service else department_pk)
+    if not can(request.user,Action.CATALOGUE_MANAGE,department=department): raise PermissionDenied
+    form=ServiceManagementForm(request.POST or None,instance=service,department=department)
+    if request.method=="POST" and form.is_valid():
+        obj=form.save(); audit(request.user,"SERVICE_CREATED" if not service else "SERVICE_UPDATED",obj,{"department":department.pk,"fields":list(form.changed_data)}); messages.success(request,"خدمت ذخیره شد."); return redirect("manage_department_detail",pk=department.pk)
+    return render(request,"control/object_form.html",{"form":form,"title":"ایجاد خدمت" if not service else "ویرایش خدمت","department":department})
