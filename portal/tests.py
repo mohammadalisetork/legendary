@@ -1,7 +1,8 @@
+import tempfile
 from datetime import date, datetime, timedelta
 from django.core.management import call_command
 from django.core.management.base import CommandError
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.urls import reverse
 from django.utils import timezone
@@ -136,6 +137,20 @@ class PortalTests(TestCase):
         call_command("seed_catalog",verbosity=0); service.refresh_from_db(); self.assertEqual(service.name,"خدمت ممیزی ویرایش‌شده")
         calendar_response=self.client.get(reverse("admin:portal_nonworkingdate_add")); self.assertContains(calendar_response,"date-trigger"); self.assertContains(calendar_response,"jalali.js")
 
+    def test_admin_can_edit_role_and_deactivate_user(self):
+        target=User.objects.create_user(username="managed-user",password="Strong-pass-123",full_name="کاربر قابل مدیریت",email="managed@example.com",role=User.Role.USER,must_change_password=False)
+        self.client.force_login(self.admin)
+        response=self.client.post(reverse("admin:portal_user_change",args=[target.pk]),{
+            "username":target.username,"full_name":target.full_name,"email":target.email,"mobile":"","organizational_unit":"طرح سلامت","job_title":"مدیر پروژه",
+            "role":User.Role.REQUEST_MANAGER,"must_change_password":"on","_save":"Save",
+        })
+        self.assertEqual(response.status_code,302)
+        target.refresh_from_db()
+        self.assertEqual(target.role,User.Role.REQUEST_MANAGER)
+        self.assertTrue(target.is_staff)
+        self.assertFalse(target.is_active)
+        self.assertTrue(target.must_change_password)
+
     def test_incomplete_draft_persists_but_cannot_submit(self):
         self.client.force_login(self.user)
         response=self.client.post(reverse("request_create",args=[self.service.pk]),{"action":"draft","project":"","title":"","priority":"NORMAL","desired_delivery_date":""}); self.assertEqual(response.status_code,302)
@@ -182,3 +197,40 @@ class EndToEndFlowTests(TestCase):
         self.client.logout(); self.client.login(username="flow-manager",password="Strong-pass-123")
         self.client.post(reverse("control_action",args=[item.pk]),{"kind":"action","owner":self.manager.pk,"status":"IN_PROGRESS"})
         self.client.post(reverse("control_action",args=[item.pk]),{"kind":"action","owner":self.manager.pk,"status":"COMPLETED"}); item.refresh_from_db(); self.assertEqual(item.status,Request.Status.COMPLETED); self.assertIsNotNone(item.completed_at); self.assertGreater(item.history.count(),5); self.assertTrue(ActivityLog.objects.filter(target_id=str(item.pk),action="STATUS_CHANGED").exists())
+
+    def test_requester_comment_attachment_manager_round_trip(self):
+        with tempfile.TemporaryDirectory() as media_root, override_settings(MEDIA_ROOT=media_root):
+            self.service.default_owner=self.manager; self.service.save(update_fields=["default_owner"])
+            self.client.force_login(self.user)
+            self.client.post(reverse("request_create",args=[self.service.pk]),self.payload()|{"action":"submit"})
+            item=Request.objects.get(title="درخواست جریان کامل")
+            upload=SimpleUploadedFile("requester-evidence.png",b"image-bytes",content_type="image/png")
+            response=self.client.post(reverse("add_message",args=[item.pk]),{"body":"توضیح و تصویر درخواست‌دهنده","file":upload})
+            self.assertRedirects(response,reverse("request_detail",args=[item.pk]))
+            attachment=item.attachments.get(original_name="requester-evidence.png")
+            self.assertEqual(attachment.response.author,self.user)
+
+            self.client.force_login(self.manager)
+            manager_detail=self.client.get(reverse("control_request_detail",args=[item.pk]))
+            self.assertEqual(manager_detail.status_code,200)
+            self.assertContains(manager_detail,"توضیح و تصویر درخواست‌دهنده")
+            self.assertContains(manager_detail,"requester-evidence.png")
+            download=self.client.get(reverse("attachment_download",args=[attachment.pk]))
+            self.assertEqual(download.status_code,200)
+            self.assertEqual(b"".join(download.streaming_content),b"image-bytes")
+            self.client.post(reverse("control_action",args=[item.pk]),{"kind":"message","body":"پاسخ مدیر درخواست"})
+            self.client.post(reverse("control_action",args=[item.pk]),{"kind":"note","body":"یادداشت محرمانه مدیر"})
+
+            self.client.force_login(self.user)
+            requester_detail=self.client.get(reverse("request_detail",args=[item.pk]))
+            self.assertContains(requester_detail,"پاسخ مدیر درخواست")
+            self.assertContains(requester_detail,"توضیح و تصویر درخواست‌دهنده")
+            self.assertContains(requester_detail,"requester-evidence.png")
+            self.assertNotContains(requester_detail,"یادداشت محرمانه مدیر")
+
+    def test_request_form_uses_proportional_action_buttons(self):
+        self.client.force_login(self.user)
+        response=self.client.get(reverse("request_create",args=[self.service.pk]))
+        self.assertContains(response,'class="btn btn-md btn-tertiary"')
+        self.assertContains(response,'name="action" value="draft" class="btn btn-md secondary"')
+        self.assertContains(response,'name="action" value="submit" class="btn btn-lg primary"')
