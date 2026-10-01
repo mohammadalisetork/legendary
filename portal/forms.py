@@ -83,8 +83,10 @@ class ManagerActionForm(forms.Form):
     reason=forms.CharField(label="دلیل تغییر وضعیت",required=False,widget=forms.Textarea(attrs={"rows":3,"placeholder":"برای توقف، درخواست اطلاعات، رد یا لغو الزامی است."}))
     def __init__(self,*a,request_obj=None,**kw):
         from .models import User
-        super().__init__(*a,**kw); self.fields["owner"].queryset=User.objects.filter(is_active=True,role__in=[User.Role.REQUEST_MANAGER,User.Role.ADMIN])
+        from .policies import eligible_owners
+        super().__init__(*a,**kw); self.fields["owner"].queryset=User.objects.none()
         if request_obj:
+            self.fields["owner"].queryset=eligible_owners(request_obj.department)
             allowed={request_obj.status,*request_obj.allowed_transitions()}; self.fields["status"].choices=[x for x in Request.Status.choices if x[0] in allowed]
             self.request_obj=request_obj
     def clean(self):

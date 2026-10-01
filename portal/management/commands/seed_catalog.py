@@ -2,7 +2,7 @@ import json, re
 from pathlib import Path
 from django.core.management.base import BaseCommand
 from django.db import transaction
-from portal.models import Category, Service, ServiceFormField, WorkingCalendar
+from portal.models import Category, Department, Service, ServiceFormField, WorkingCalendar
 
 DEFAULT_FIELDS=[
  ("problem","مسئله و چرایی درخواست","textarea",True,"مسئله‌ای را که باید حل شود شرح دهید."),
@@ -31,11 +31,12 @@ class Command(BaseCommand):
         match=re.search(r'<script id="seed" type="application/json">([\s\S]*?)</script>',html)
         if not match: raise RuntimeError("Catalogue seed was not found")
         rows=json.loads(match.group(1)); families=[]
+        market=Department.objects.get(code="market-development")
         for row in rows:
             if row["family"] not in families: families.append(row["family"])
         categories={}
         for order,name in enumerate(families):
-            categories[name],_=Category.objects.get_or_create(name=name,defaults={"slug":f"category-{order+1}","description":f"خدمات خانواده {name}","display_order":order})
+            categories[name],_=Category.objects.get_or_create(department=market,name=name,defaults={"slug":f"category-{order+1}","description":f"خدمات خانواده {name}","display_order":order})
         created=0
         for order,row in enumerate(rows):
             response=nums(row.get("response")); min_days,max_days=delivery_range(row.get("sla"))

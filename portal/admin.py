@@ -3,7 +3,7 @@ from django.contrib.auth.admin import UserAdmin
 from django.contrib.auth.forms import UserChangeForm, UserCreationForm
 from django import forms
 import jdatetime
-from .models import ActivityLog, AppSetting, Category, NonWorkingDate, Request, Service, ServiceFormField, User, WorkingCalendar
+from .models import ActivityLog, AppSetting, Category, Department, NonWorkingDate, Request, RoleAssignment, Service, ServiceFormField, User, WorkingCalendar
 from .utils import audit
 
 class AuditAdminMixin:
@@ -36,9 +36,11 @@ class PortalUserAdmin(AuditAdminMixin,UserAdmin):
 class ServiceFieldInline(admin.TabularInline): model=ServiceFormField; extra=1
 @admin.register(Service)
 class ServiceAdmin(AuditAdminMixin,admin.ModelAdmin):
-    list_display=("code","name","category","domain","initial_response_days","delivery_min_days","delivery_max_days","default_owner","active")
-    list_filter=("active","domain","category"); search_fields=("code","name","full_description"); ordering=("category","display_order"); inlines=(ServiceFieldInline,)
+    list_display=("code","name","category","provider_department","domain","initial_response_days","delivery_min_days","delivery_max_days","default_owner","active")
+    list_filter=("active","domain","category__department","category"); search_fields=("code","name","full_description"); ordering=("category","display_order"); inlines=(ServiceFieldInline,)
     actions=("duplicate_services",)
+    @admin.display(description="اداره ارائه‌دهنده",ordering="category__department")
+    def provider_department(self,obj): return obj.category.department
     @admin.action(description="تکثیر خدمت انتخاب‌شده")
     def duplicate_services(self,request,queryset):
         for service in queryset:
@@ -46,7 +48,7 @@ class ServiceAdmin(AuditAdminMixin,admin.ModelAdmin):
             for f in fields: f.pk=None; f.service=service; f.save()
 
 @admin.register(Category)
-class CategoryAdmin(AuditAdminMixin,admin.ModelAdmin): list_display=("name","display_order","active"); list_editable=("display_order","active"); prepopulated_fields={"slug":("name",)}
+class CategoryAdmin(AuditAdminMixin,admin.ModelAdmin): list_display=("name","department","display_order","active"); list_filter=("department","active"); list_editable=("display_order","active"); prepopulated_fields={"slug":("name",)}
 @admin.register(ServiceFormField)
 class ServiceFormFieldAdmin(AuditAdminMixin,admin.ModelAdmin): list_display=("label","service","field_type","required","display_order","active"); list_filter=("field_type","required","active","service")
 @admin.register(WorkingCalendar)
@@ -59,7 +61,35 @@ class NonWorkingDateAdmin(AuditAdminMixin,admin.ModelAdmin):
     def jalali_date(self,obj): return jdatetime.date.fromgregorian(date=obj.date).strftime("%Y/%m/%d").translate(str.maketrans("0123456789","۰۱۲۳۴۵۶۷۸۹"))
 @admin.register(Request)
 class RequestAdmin(admin.ModelAdmin):
-    list_display=("public_id","title","requester","service","status","priority","assigned_owner","submitted_at"); list_filter=("status","priority","service__category"); search_fields=("public_id","title","requester__full_name"); readonly_fields=("public_id","submitted_at","first_response_at","completed_at","paused_seconds")
+    list_display=("public_id","title","department","requester","service","status","priority","assigned_owner","submitted_at"); list_filter=("department","status","priority","service__category"); search_fields=("public_id","title","requester__full_name"); readonly_fields=("public_id","department","submitted_at","first_response_at","completed_at","paused_seconds")
+
+@admin.register(Department)
+class DepartmentAdmin(admin.ModelAdmin):
+    list_display=("code","name","short_name","status","display_order","created_at","updated_at")
+    list_filter=("status",); list_editable=("status","display_order"); search_fields=("code","name","short_name")
+    readonly_fields=("created_at","updated_at")
+    def save_model(self,request,obj,form,change):
+        old_status=Department.objects.filter(pk=obj.pk).values_list("status",flat=True).first() if change else None
+        super().save_model(request,obj,form,change)
+        audit(request.user,"DEPARTMENT_UPDATED" if change else "DEPARTMENT_CREATED",obj,{"fields":list(form.changed_data)})
+        if change and old_status!=obj.status: audit(request.user,"DEPARTMENT_STATUS_CHANGED",obj,{"from":old_status,"to":obj.status})
+    def has_delete_permission(self,request,obj=None): return False
+
+@admin.register(RoleAssignment)
+class RoleAssignmentAdmin(admin.ModelAdmin):
+    list_display=("user","role","scope_type","department","is_active","assigned_by","created_at")
+    list_filter=("role","scope_type","department","is_active"); search_fields=("user__username","user__full_name","department__name")
+    readonly_fields=("created_at","updated_at","assigned_by")
+    def save_model(self,request,obj,form,change):
+        previous=RoleAssignment.objects.filter(pk=obj.pk).values("role","department_id","is_active").first() if change else None
+        if not obj.assigned_by_id: obj.assigned_by=request.user
+        super().save_model(request,obj,form,change)
+        action="DEPARTMENT_MEMBERSHIP_ADDED" if not change else "DEPARTMENT_ROLE_CHANGED"
+        if previous and previous["is_active"] and not obj.is_active: action="DEPARTMENT_MEMBERSHIP_REMOVED"
+        audit(request.user,action,obj,{"fields":list(form.changed_data),"department":obj.department_id,"role":obj.role})
+    def delete_model(self,request,obj):
+        audit(request.user,"DEPARTMENT_MEMBERSHIP_REMOVED",obj,{"department":obj.department_id,"role":obj.role})
+        super().delete_model(request,obj)
 @admin.register(ActivityLog)
 class ActivityAdmin(admin.ModelAdmin):
     list_display=("created_at","actor","action","target_type","target_id")

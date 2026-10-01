@@ -3,8 +3,10 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from django.conf import settings
 from django.contrib.auth.models import AbstractUser
+from django.core.exceptions import ValidationError
 from django.core.validators import MinValueValidator
 from django.db import models
+from django.db.utils import OperationalError, ProgrammingError
 from django.utils import timezone
 
 class User(AbstractUser):
@@ -18,8 +20,14 @@ class User(AbstractUser):
     must_change_password=models.BooleanField("تغییر اجباری رمز",default=True)
     last_activity_at=models.DateTimeField(null=True,blank=True)
     def save(self,*a,**kw):
-        self.is_staff=self.role in {self.Role.ADMIN,self.Role.REQUEST_MANAGER}
-        self.is_superuser=self.role==self.Role.ADMIN
+        scoped_super_admin=False
+        if self.pk:
+            try:
+                scoped_super_admin=self.role_assignments.filter(role="SUPER_ADMIN",scope_type="GLOBAL",is_active=True).exists()
+            except (OperationalError,ProgrammingError):
+                pass
+        self.is_staff=self.role in {self.Role.ADMIN,self.Role.REQUEST_MANAGER} or scoped_super_admin
+        self.is_superuser=self.role==self.Role.ADMIN or scoped_super_admin
         super().save(*a,**kw)
     def __str__(self): return self.full_name or self.username
 
@@ -27,10 +35,90 @@ class Timestamped(models.Model):
     created_at=models.DateTimeField(auto_now_add=True); updated_at=models.DateTimeField(auto_now=True)
     class Meta: abstract=True
 
+class Department(Timestamped):
+    class Status(models.TextChoices):
+        DRAFT="DRAFT","پیش‌نویس"
+        PUBLISHED="PUBLISHED","منتشرشده"
+        DISABLED="DISABLED","غیرفعال"
+        ARCHIVED="ARCHIVED","بایگانی‌شده"
+    code=models.SlugField(max_length=64,unique=True)
+    name=models.CharField(max_length=200)
+    short_name=models.CharField(max_length=100,blank=True)
+    description=models.TextField(blank=True)
+    intro_text=models.TextField(blank=True)
+    status=models.CharField(max_length=16,choices=Status.choices,default=Status.DRAFT,db_index=True)
+    display_order=models.PositiveIntegerField(default=0)
+    class Meta:
+        ordering=["display_order","name"]
+        constraints=[models.CheckConstraint(condition=models.Q(status__in=["DRAFT","PUBLISHED","DISABLED","ARCHIVED"]),name="valid_department_status")]
+    @property
+    def is_requestable(self): return self.status==self.Status.PUBLISHED
+    def __str__(self): return self.short_name or self.name
+
+class RoleAssignment(Timestamped):
+    class Role(models.TextChoices):
+        REQUESTER="REQUESTER","درخواست‌دهنده"
+        REQUEST_MANAGER="REQUEST_MANAGER","مدیر درخواست"
+        DEPARTMENT_LEAD="DEPARTMENT_LEAD","مدیر اداره"
+        SUPERVISOR="SUPERVISOR","ناظر"
+        EXECUTIVE_VIEWER="EXECUTIVE_VIEWER","مشاهده‌گر ارشد"
+        SUPER_ADMIN="SUPER_ADMIN","مدیر ارشد سامانه"
+    class ScopeType(models.TextChoices):
+        GLOBAL="GLOBAL","سراسری"
+        DEPARTMENT="DEPARTMENT","اداره"
+    user=models.ForeignKey(settings.AUTH_USER_MODEL,on_delete=models.CASCADE,related_name="role_assignments")
+    role=models.CharField(max_length=32,choices=Role.choices,db_index=True)
+    scope_type=models.CharField(max_length=16,choices=ScopeType.choices,db_index=True)
+    department=models.ForeignKey(Department,null=True,blank=True,on_delete=models.PROTECT,related_name="role_assignments")
+    is_active=models.BooleanField(default=True,db_index=True)
+    assigned_by=models.ForeignKey(settings.AUTH_USER_MODEL,null=True,blank=True,on_delete=models.SET_NULL,related_name="assigned_roles")
+    class Meta:
+        ordering=["user__username","role"]
+        constraints=[
+            models.CheckConstraint(condition=(models.Q(scope_type="GLOBAL",department__isnull=True)|models.Q(scope_type="DEPARTMENT",department__isnull=False)),name="role_assignment_scope_target"),
+            models.CheckConstraint(condition=(models.Q(scope_type="GLOBAL",role__in=["REQUESTER","SUPERVISOR","EXECUTIVE_VIEWER","SUPER_ADMIN"])|models.Q(scope_type="DEPARTMENT",role__in=["REQUEST_MANAGER","DEPARTMENT_LEAD"])),name="role_assignment_role_scope"),
+            models.UniqueConstraint(fields=["user","role","scope_type"],condition=models.Q(scope_type="GLOBAL"),name="unique_global_role_assignment"),
+            models.UniqueConstraint(fields=["user","role","department"],condition=models.Q(scope_type="DEPARTMENT"),name="unique_department_role_assignment"),
+        ]
+        indexes=[models.Index(fields=["department","role","is_active"],name="portal_role_departm_a46b0d_idx"),models.Index(fields=["user","scope_type","is_active"],name="portal_role_user_id_9e7628_idx")]
+    def clean(self):
+        super().clean()
+        if self.scope_type==self.ScopeType.GLOBAL and self.department_id:
+            raise ValidationError({"department":"نقش سراسری نباید اداره داشته باشد."})
+        if self.scope_type==self.ScopeType.DEPARTMENT and not self.department_id:
+            raise ValidationError({"department":"برای نقش اداره‌ای انتخاب اداره الزامی است."})
+    def save(self,*a,**kw):
+        super().save(*a,**kw)
+        self.user.save(update_fields=["is_staff","is_superuser"])
+    def delete(self,*a,**kw):
+        user=self.user
+        result=super().delete(*a,**kw)
+        user.save(update_fields=["is_staff","is_superuser"])
+        return result
+    def __str__(self):
+        scope=self.department if self.department_id else self.get_scope_type_display()
+        return f"{self.user} · {self.get_role_display()} · {scope}"
+
 class Category(Timestamped):
-    name=models.CharField(max_length=160,unique=True); slug=models.SlugField(max_length=180,unique=True,allow_unicode=True)
+    name=models.CharField(max_length=160); slug=models.SlugField(max_length=180,allow_unicode=True)
+    department=models.ForeignKey(Department,on_delete=models.PROTECT,related_name="service_families")
     description=models.TextField(blank=True); active=models.BooleanField(default=True); display_order=models.PositiveIntegerField(default=0)
-    class Meta: ordering=["display_order","name"]; verbose_name_plural="دسته‌بندی‌ها"
+    class Meta:
+        ordering=["department__display_order","display_order","name"]
+        verbose_name="خانواده خدمت"
+        verbose_name_plural="خانواده‌های خدمت"
+        constraints=[models.UniqueConstraint(fields=["department","name"],name="unique_department_category_name"),models.UniqueConstraint(fields=["department","slug"],name="unique_department_category_slug")]
+        indexes=[models.Index(fields=["department","active"],name="portal_cate_departm_762dfa_idx")]
+    def clean(self):
+        super().clean()
+        if self.pk and self.department_id:
+            from .policies import can_be_default_owner
+            for service in self.services.select_related("default_owner").exclude(default_owner=None):
+                if not can_be_default_owner(service.default_owner,self.department):
+                    raise ValidationError({"department":f"مسئول پیش‌فرض خدمت {service.code} عضو اداره مقصد نیست."})
+    def save(self,*a,**kw):
+        self.full_clean()
+        super().save(*a,**kw)
     def __str__(self): return self.name
 
 class Service(Timestamped):
@@ -46,6 +134,19 @@ class Service(Timestamped):
     maximum_duration_days=models.PositiveSmallIntegerField(null=True,blank=True)
     supports_desired_date=models.BooleanField(default=True); active=models.BooleanField(default=True); display_order=models.PositiveIntegerField(default=0)
     class Meta: ordering=["category__display_order","display_order","code"]; indexes=[models.Index(fields=["active","category"])]
+    @property
+    def department(self): return self.category.department
+    @property
+    def is_requestable(self): return self.active and self.category.active and self.category.department.is_requestable
+    def clean(self):
+        super().clean()
+        if self.default_owner_id:
+            from .policies import can_be_default_owner
+            if not can_be_default_owner(self.default_owner,self.category.department):
+                raise ValidationError({"default_owner":"مسئول پیش‌فرض باید مدیر درخواست یا مدیر همین اداره باشد."})
+    def save(self,*a,**kw):
+        self.full_clean()
+        super().save(*a,**kw)
     def __str__(self): return f"{self.code} · {self.name}"
 
 class ServiceFormField(Timestamped):
@@ -78,6 +179,7 @@ class Request(Timestamped):
         Status.ON_HOLD:{Status.UNDER_REVIEW,Status.ACCEPTED,Status.IN_PROGRESS,Status.REJECTED,Status.CANCELLED},
     }
     public_id=models.CharField(max_length=32,unique=True,editable=False,db_index=True); requester=models.ForeignKey(settings.AUTH_USER_MODEL,on_delete=models.PROTECT,related_name="requests")
+    department=models.ForeignKey(Department,on_delete=models.PROTECT,related_name="requests")
     requesting_unit=models.CharField(max_length=160); service=models.ForeignKey(Service,on_delete=models.PROTECT,related_name="requests"); project=models.CharField(max_length=200)
     title=models.CharField(max_length=250); request_data=models.JSONField(default=dict); desired_delivery_date=models.DateField(null=True,blank=True)
     priority=models.CharField(max_length=12,choices=Priority.choices,default=Priority.NORMAL); status=models.CharField(max_length=20,choices=Status.choices,default=Status.DRAFT,db_index=True)
@@ -85,8 +187,14 @@ class Request(Timestamped):
     submitted_at=models.DateTimeField(null=True,blank=True); first_response_at=models.DateTimeField(null=True,blank=True); current_stage_started_at=models.DateTimeField(default=timezone.now); completed_at=models.DateTimeField(null=True,blank=True)
     expected_initial_response_at=models.DateTimeField(null=True,blank=True); estimated_delivery_min=models.DateField(null=True,blank=True); estimated_delivery_max=models.DateField(null=True,blank=True)
     operational_paused_at=models.DateTimeField(null=True,blank=True); paused_seconds=models.PositiveBigIntegerField(default=0); needs_user_action=models.BooleanField(default=False,db_index=True)
-    class Meta: ordering=["-updated_at"]; indexes=[models.Index(fields=["requester","status"]),models.Index(fields=["assigned_owner","status"])]
+    class Meta: ordering=["-updated_at"]; indexes=[models.Index(fields=["requester","status"]),models.Index(fields=["assigned_owner","status"]),models.Index(fields=["department","status"],name="portal_requ_departm_9bda87_idx")]
     def save(self,*a,**kw):
+        if self._state.adding:
+            self.department=self.service.category.department
+            if self.assigned_owner_id:
+                from .policies import can_be_default_owner
+                if not can_be_default_owner(self.assigned_owner,self.department):
+                    raise ValidationError({"assigned_owner":"مسئول رسیدگی باید مدیر درخواست یا مدیر اداره ارائه‌دهنده باشد."})
         if not self.public_id:
             today=timezone.localdate().strftime("%Y%m%d")
             self.public_id=f"MKT-{today}-{uuid.uuid4().hex[:6].upper()}"
