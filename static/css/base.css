@@ -1,0 +1,15 @@
+html { font-size: var(--brand-base-size, 15px); font-family: var(--font-body); color: var(--text-primary); background: var(--background); scrollbar-color: #8198aa var(--background); scrollbar-width: thin; }
+body { font-size: 1rem; line-height: var(--line-body); }
+h1, h2, h3 { line-height: var(--line-heading); }
+h1 { font-size: var(--font-h1); }
+h2 { font-size: var(--font-h2); }
+h3 { font-size: var(--font-h3); }
+::selection { background: color-mix(in srgb, var(--primary) 22%, white); color: var(--text-primary); }
+*:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; box-shadow: var(--focus-ring); }
+*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar-track { background: var(--background); }
+*::-webkit-scrollbar-thumb { background: #8198aa; border: 2px solid var(--background); border-radius: 8px; }
+*::-webkit-scrollbar-thumb:hover { background: #597489; }
+*::-webkit-scrollbar-thumb:active { background: #3d5c74; }
+@media (forced-colors: active) { html, * { scrollbar-color: auto; } }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; scroll-behavior: auto !important; } }

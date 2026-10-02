@@ -1,0 +1,8 @@
+<div class="field {% if field.errors %}has-error{% endif %}">
+  <label for="{{ field.id_for_label }}">{{ field.label }}{% if field.field.required %}<i aria-hidden="true"> *</i>{% endif %}</label>
+  {% if field.field.widget.input_type == 'hidden' %}<button type="button" class="date-trigger" onclick="return JalaliDate.openTrigger(event,this)" data-target="{{ field.id_for_label }}" aria-label="انتخاب {{ field.label }}">انتخاب تاریخ</button>{{ field }}
+  {% elif field.field.widget.input_type == 'file' %}<div class="upload-zone">{{ field }}<div class="file-preview" role="status">فایلی انتخاب نشده است.</div><input type="button" value="حذف انتخاب" class="btn btn-sm btn-tertiary" data-clear-file></div>
+  {% else %}{{ field }}{% endif %}
+  {% if field.help_text %}<small id="{{ field.id_for_label }}_helptext">{{ field.help_text }}</small>{% endif %}
+  {% if field.errors %}<div id="{{ field.id_for_label }}_error" class="errorlist" role="alert">{{ field.errors }}</div>{% endif %}
+</div>

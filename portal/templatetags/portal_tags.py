@@ -23,3 +23,21 @@ def duration_fa(value):
         if minutes or not parts: parts.append(f"{digits(minutes)} دقیقه")
         return " و ".join(parts[:2])
     except Exception:return ""
+
+@register.inclusion_tag("components/request_journey.html")
+def request_journey(item, events):
+    status=item.status
+    index={"DRAFT":0,"SUBMITTED":1,"UNDER_REVIEW":1,"NEED_INFO":1,"ON_HOLD":1,"ACCEPTED":2,"IN_PROGRESS":3,"COMPLETED":4,"REJECTED":1,"CANCELLED":1}.get(status,0)
+    stopped=status in {"REJECTED","CANCELLED"}
+    stages=[{"label":label,"state":"is-stopped" if stopped and number==index else "is-current" if number==index else "is-complete" if number<index else ""} for number,label in enumerate(("ثبت درخواست","بررسی","پذیرش","اجرا","تکمیل"))]
+    return {"stages":stages,"events":events}
+
+@register.filter
+def history_label(action):
+    return {"REQUEST_CREATED":"ایجاد پیش‌نویس","DRAFT_UPDATED":"ویرایش پیش‌نویس","REQUEST_SUBMITTED":"ثبت نهایی درخواست","REQUESTER_RESPONDED":"پیام درخواست‌دهنده","MANAGER_RESPONDED":"پاسخ رسیدگی‌کننده","INFORMATION_REQUESTED":"درخواست اطلاعات تکمیلی","STATUS_CHANGED":"تغییر وضعیت","OWNER_CHANGED":"تغییر مسئول رسیدگی","CLOCK_PAUSED":"توقف ساعت عملیاتی","CLOCK_RESUMED":"ادامه ساعت عملیاتی","INTERNAL_NOTE_ADDED":"ثبت یادداشت داخلی"}.get(action,action)
+
+@register.simple_tag(takes_context=True)
+def query_replace(context, **values):
+    params=context["request"].GET.copy()
+    for key,value in values.items(): params[key]=value
+    return params.urlencode()

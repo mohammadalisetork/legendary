@@ -1,0 +1,6 @@
+{% load portal_tags %}<section class="panel request-journey" aria-label="مسیر درخواست">
+  <h2>مسیر درخواست</h2>
+  <ol class="journey-stages">{% for stage in stages %}<li class="{{ stage.state }}" {% if stage.state == 'is-current' or stage.state == 'is-stopped' %}aria-current="step"{% endif %}>{{ stage.label }}</li>{% endfor %}</ol>
+  <h3>رویدادها</h3>
+  <ol class="timeline">{% for event in events %}<li><b>{{ event.action|history_label }}</b>{% if event.metadata.reason %}<p>{{ event.metadata.reason }}</p>{% endif %}<small>{{ event.created_at|jdate }}{% if event.actor %} · {{ event.actor }}{% endif %}</small></li>{% empty %}<li>رویدادی ثبت نشده است.</li>{% endfor %}</ol>
+</section>

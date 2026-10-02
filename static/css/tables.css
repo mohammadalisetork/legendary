@@ -1,0 +1,11 @@
+.table-wrap { overflow-x: auto; scrollbar-gutter: stable; }
+table { font-size: .87rem; }
+th { position: sticky; top: 0; z-index: 1; background: var(--surface-subtle); color: var(--text-secondary); white-space: nowrap; }
+th, td { padding: 10px 12px; }
+tbody tr:hover { background: var(--surface-subtle); }
+td a:not(.btn) { color: var(--primary); font-weight: 700; text-underline-offset: 3px; }
+td a:not(.btn):hover { text-decoration: underline; }
+td .status { font-weight: 700; }
+.pagination { align-items: center; }
+.pagination a { color: var(--primary); padding: 4px 10px; border-radius: var(--radius-sm); }
+.pagination a:hover { background: var(--blue2); }

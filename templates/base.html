@@ -1,3 +1,46 @@
-{% load static %}<!doctype html><html lang="fa" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{% block title %}کاتالوگ خدمات{% endblock %}</title><link rel="stylesheet" href="{% static 'app.css' %}"></head><body>
-{% if user.is_authenticated %}<div class="layout"><aside class="sidebar"><div class="brand"><strong>مرکز خدمات</strong><small>کاتالوگ خدمات و مدیریت درخواست‌ها</small></div><nav aria-label="ناوبری اصلی"><a href="{% url 'home' %}">خانه</a><a href="{% url 'service_hub' %}">مرکز خدمات</a><a href="{% url 'my_requests' %}">درخواست‌های من</a><a href="{% url 'drafts' %}">پیش‌نویس‌ها</a><a href="{% url 'notifications' %}">اعلان‌ها {% if unread_notifications %}<b class="count">{{ unread_notifications }}</b>{% endif %}</a><a href="{% url 'profile' %}">پروفایل</a>{% if is_request_manager %}<span>عملیات</span><a href="{% url 'control_dashboard' %}">داشبورد اداره</a><a href="{% url 'control_requests' %}">صف درخواست‌ها</a>{% endif %}{% if can_manage_departments %}<span>مدیریت</span><a href="{% url 'manage_departments' %}">اداره‌ها و کاتالوگ</a>{% endif %}{% if is_super_admin %}<a href="/django-admin/">تنظیمات سامانه</a>{% endif %}</nav><form novalidate method="post" action="{% url 'logout' %}">{% csrf_token %}<button class="logout">خروج</button></form></aside><main><header class="topbar"><div><b>{% block heading %}سامانه خدمات{% endblock %}</b><small>معاونت راهکارهای هوشمند</small></div><div>{{ user.full_name|default:user.username }}</div></header><div class="content">{% for message in messages %}<div class="flash {{ message.tags }}">{{ message }}</div>{% endfor %}{% block content %}{% endblock %}</div></main></div>{% else %}{% block public %}{% endblock %}{% endif %}
-<script src="{% static 'jalali.js' %}"></script>{% block scripts %}{% endblock %}</body></html>
+{% load static %}<!doctype html>
+<html lang="fa" dir="rtl" style="--brand-primary:{{ appearance.primary_color }};--brand-primary-hover:{{ appearance_primary_hover }};--brand-primary-active:{{ appearance_primary_active }};--brand-accent:{{ appearance.accent_color }};--brand-base-size:{{ appearance.base_font_size }}px;--brand-font:{{ appearance_font_stack }}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>{% block title %}{{ appearance.app_name }}{% endblock %}</title>
+  {% if appearance.logo %}<link rel="icon" type="image/png" href="{% url 'brand_logo' %}">{% endif %}
+  <link rel="stylesheet" href="{% static 'app.css' %}">
+</head>
+<body>
+{% if user.is_authenticated %}
+<div class="layout">
+  <aside class="sidebar" aria-label="ناوبری سامانه">
+    <a class="brand" href="{% url 'home' %}">
+      {% if appearance.logo %}<img class="brand-logo" src="{% url 'brand_logo' %}" alt="" width="36" height="36">{% else %}<span class="brand-mark" aria-hidden="true">خ</span>{% endif %}
+      <span><strong>{{ appearance.app_name }}</strong><small>خدمات و درخواست‌ها</small></span>
+    </a>
+    <nav aria-label="ناوبری اصلی">
+      <span>فضای شخصی</span>
+      <a href="{% url 'home' %}" {% if request.resolver_match.url_name == 'home' %}aria-current="page"{% endif %}><span class="nav-label">{% include 'components/icon.html' with name='home' %}خانه</span></a>
+      <a href="{% url 'service_hub' %}" {% if request.resolver_match.url_name == 'service_hub' or request.resolver_match.url_name == 'department_landing' or request.resolver_match.url_name == 'service_detail' or request.resolver_match.url_name == 'catalog' or request.resolver_match.url_name == 'request_create' %}aria-current="page"{% endif %}><span class="nav-label">{% include 'components/icon.html' with name='services' %}مرکز خدمات</span></a>
+      <a href="{% url 'my_requests' %}" {% if request.resolver_match.url_name == 'my_requests' or request.resolver_match.url_name == 'request_detail' or request.resolver_match.url_name == 'request_edit' %}aria-current="page"{% endif %}><span class="nav-label">{% include 'components/icon.html' with name='requests' %}درخواست‌های من</span></a>
+      <a href="{% url 'drafts' %}" {% if request.resolver_match.url_name == 'drafts' %}aria-current="page"{% endif %}><span class="nav-label">{% include 'components/icon.html' with name='clock' %}پیش‌نویس‌ها</span></a>
+      {% if is_request_manager %}<span>عملیات</span>
+      <a href="{% url 'control_dashboard' %}" {% if request.resolver_match.url_name == 'control_dashboard' %}aria-current="page"{% endif %}><span class="nav-label">{% include 'components/icon.html' with name='dashboard' %}داشبورد اداره</span></a>
+      <a href="{% url 'control_requests' %}" {% if request.resolver_match.url_name == 'control_requests' or request.resolver_match.url_name == 'control_request_detail' %}aria-current="page"{% endif %}><span class="nav-label">{% include 'components/icon.html' with name='requests' %}صف درخواست‌ها</span></a>{% endif %}
+      {% if can_manage_departments or is_super_admin %}<span>مدیریت سامانه</span>{% endif %}
+      {% if can_manage_departments %}<a href="{% url 'manage_departments' %}" {% if request.resolver_match.url_name == 'manage_departments' or request.resolver_match.url_name == 'manage_department_detail' or request.resolver_match.url_name == 'manage_department_edit' or request.resolver_match.url_name == 'manage_department_create' or request.resolver_match.url_name == 'manage_family_edit' or request.resolver_match.url_name == 'manage_service_edit' %}aria-current="page"{% endif %}><span class="nav-label">{% include 'components/icon.html' with name='services' %}اداره‌ها و کاتالوگ</span></a>{% endif %}
+      {% if is_super_admin %}<a href="{% url 'appearance_settings' %}" {% if request.resolver_match.url_name == 'appearance_settings' %}aria-current="page"{% endif %}><span class="nav-label">{% include 'components/icon.html' with name='settings' %}ظاهر سامانه</span></a><a href="/django-admin/">تنظیمات پیشرفته</a>{% endif %}
+    </nav>
+    <form method="post" action="{% url 'logout' %}" novalidate>{% csrf_token %}<button class="logout">خروج از سامانه</button></form>
+  </aside>
+  <main id="main-content">
+    <header class="topbar">
+      <div class="topbar-context"><b>{% block heading %}سامانه خدمات{% endblock %}</b></div>
+      <div class="topbar-user"><a href="{% url 'notifications' %}" {% if request.resolver_match.url_name == 'notifications' %}aria-current="page"{% endif %}>اعلان‌ها{% if unread_notifications %} <span class="count">{{ unread_notifications }}</span>{% endif %}</a><span class="user-avatar" aria-hidden="true">{{ user.full_name|default:user.username|slice:':1' }}</span><a class="user-identity" href="{% url 'profile' %}"><b>{{ user.full_name|default:user.username }}</b><small>{{ user_context_label }}</small></a><form method="post" action="{% url 'logout' %}" class="topbar-logout" novalidate>{% csrf_token %}<button type="submit" class="btn btn-sm btn-tertiary">خروج</button></form></div>
+    </header>
+    <div class="content">
+      {% if messages %}<div class="flash-area" aria-live="polite">{% for message in messages %}<div class="flash {{ message.tags }}" role="status"><input class="flash-dismiss" type="button" value="×" aria-label="بستن پیام" data-dismiss>{{ message }}</div>{% endfor %}</div>{% endif %}
+      {% block content %}{% endblock %}
+    </div>
+  </main>
+</div>
+{% else %}{% block public %}{% endblock %}{% endif %}
+<script src="{% static 'jalali.js' %}" defer></script><script src="{% static 'app.js' %}" type="module"></script>{% block scripts %}{% endblock %}
+</body></html>

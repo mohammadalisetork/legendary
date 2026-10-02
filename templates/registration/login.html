@@ -1,1 +1,11 @@
-{% extends 'base.html' %}{% block title %}ورود به سامانه{% endblock %}{% block public %}<div class="login-wrap"><section class="login-card"><div class="login-head"><span>پرتال داخلی</span><h1>کاتالوگ خدمات و مدیریت درخواست‌ها</h1><p>اداره توسعه بازار راهکارهای هوشمند</p></div>{% if throttled %}<div class="flash error">تلاش‌های ناموفق بیش از حد مجاز است. کمی بعد دوباره تلاش کنید.</div>{% endif %}<form novalidate method="post" class="stack">{% csrf_token %}{{ form.non_field_errors }}<label>نام کاربری{{ form.username }}</label><label>رمز عبور{{ form.password }}</label><button class="primary">ورود</button></form><small>این سامانه عمومی نیست. حساب کاربری توسط مدیر سامانه ایجاد می‌شود.</small></section></div>{% endblock %}
+{% extends 'base.html' %}{% block title %}ورود | {{ appearance.app_name }}{% endblock %}{% block public %}
+<main class="login-wrap"><section class="login-card" aria-labelledby="login-title">
+  <div class="login-head">{% if appearance.logo %}<img src="{% url 'brand_logo' %}" alt="" width="48" height="48" class="brand-logo">{% endif %}<h1 id="login-title">{{ appearance.app_name }}</h1><p>ورود به سامانه خدمات</p></div>
+  {% if throttled %}<div class="flash error" role="alert">تلاش‌های ناموفق بیش از حد مجاز است. کمی بعد دوباره تلاش کنید.</div>{% endif %}
+  <form method="post" class="stack" novalidate data-submit-guard>{% csrf_token %}{{ form.non_field_errors }}
+    <p><label for="{{ form.username.id_for_label }}">نام کاربری</label>{{ form.username }}{{ form.username.errors }}</p>
+    <p><label for="{{ form.password.id_for_label }}">رمز عبور</label><span class="password-field">{{ form.password }}<input type="button" value="نمایش" class="password-toggle" data-password-toggle="{{ form.password.id_for_label }}" aria-pressed="false"></span>{{ form.password.errors }}</p>
+    <button type="submit" class="btn btn-md primary">ورود به سامانه</button>
+  </form>
+  <small>حساب کاربری توسط مدیر سامانه ایجاد می‌شود.</small>
+</section></main>{% endblock %}

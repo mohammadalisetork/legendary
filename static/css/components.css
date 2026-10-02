@@ -1,0 +1,42 @@
+.panel, .card { border-color: var(--border); border-radius: var(--radius-md); box-shadow: var(--elevation-surface); }
+.panel { padding: 20px; }
+.card { transition: border-color var(--motion-fast), box-shadow var(--motion-fast); }
+.card:hover { border-color: var(--border-strong); box-shadow: var(--elevation-raised); }
+.btn, .primary, .secondary, .button { width: auto; max-width: 100%; border-radius: var(--radius-sm); font-weight: var(--weight-medium); text-decoration: none; }
+.btn, .button, button.primary, button.secondary, a.primary, a.secondary { display: inline-flex; justify-content: center; align-items: center; gap: 8px; line-height: 1.25; vertical-align: middle; }
+.btn-sm { min-height: 32px; padding: 5px 12px; font-size: .8rem; }
+.btn-md, .primary, .secondary, .button { min-height: 40px; padding: 8px 16px; font-size: .9rem; }
+.btn-lg { min-height: 44px; padding: 9px 18px; font-size: .93rem; }
+.primary { background: var(--primary); color: white; border-color: var(--primary); }
+.primary:hover { background: var(--primary-hover); border-color: var(--primary-hover); color: white; }
+.primary:active { background: var(--primary-active); }
+.secondary { background: var(--surface); color: var(--primary); border-color: var(--border-strong); }
+.secondary:hover { background: var(--surface-subtle); border-color: var(--primary); }
+.btn-tertiary { color: var(--text-secondary); }
+.btn-tertiary:hover { color: var(--primary); background: var(--surface-subtle); }
+.btn-danger { background: var(--danger); color: white; }
+.btn-danger:hover { background: #842b2a; }
+.confirm-dialog { width: min(440px, calc(100% - 32px)); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 22px; color: var(--text-primary); background: var(--surface); box-shadow: var(--elevation-overlay); }
+.confirm-dialog::backdrop { background: rgb(15 35 55 / 50%); }
+button:disabled, .btn[aria-disabled="true"], .button[aria-disabled="true"] { opacity: .55; cursor: not-allowed; pointer-events: none; }
+.btn[aria-busy="true"], button[aria-busy="true"] { cursor: wait; }
+.btn[aria-busy="true"]::after, button[aria-busy="true"]::after { content: ""; width: 13px; height: 13px; border: 2px solid currentColor; border-left-color: transparent; border-radius: 50%; animation: btn-spin .7s linear infinite; }
+.flash, .page-banner { border-radius: var(--radius-sm); padding: 10px 14px; }
+.flash { background: #e8f6f0; color: #115740; border-color: #a9d8c5; }
+.flash.error { background: #fff0ef; color: #862c2c; border-color: #e9bab5; }
+.flash.warning { background: #fff8e9; color: #754606; border-color: #edd398; }
+.flash.info { background: #eaf4fb; color: #154f80; border-color: #b7d4e9; }
+.flash-area { position: relative; }
+.flash-dismiss { float: left; border: 0; background: transparent; color: inherit; padding: 0 8px; font-size: 1.15rem; }
+.status { border-radius: 99px; background: #eaf2f9; color: #174f7d; font-size: .76rem; font-weight: 700; white-space: nowrap; }
+.status[data-status="COMPLETED"], .status[data-status="PUBLISHED"] { background: #e5f4ed; color: #126044; }
+.status[data-status="REJECTED"], .status[data-status="CANCELLED"], .status[data-status="ARCHIVED"] { background: #f7eae9; color: #943a37; }
+.status[data-status="NEED_INFO"], .status[data-status="ON_HOLD"], .status[data-status="DISABLED"] { background: #fff2db; color: #78500e; }
+.status[data-status="DRAFT"] { background: #eff2f5; color: #52697e; }
+.empty-state { padding: 26px; text-align: center; color: var(--text-secondary); }
+.empty-state h3 { margin: 0 0 4px; color: var(--text-primary); }
+.empty-state p { margin: 0 0 12px; }
+.skeleton { background: linear-gradient(90deg, var(--surface-subtle), var(--border), var(--surface-subtle)); background-size: 200% 100%; animation: skeleton-shimmer 1.5s linear infinite; border-radius: var(--radius-sm); }
+@keyframes skeleton-shimmer { to { background-position: -200% 0; } }
+.workspace-tabs a[aria-current="page"], .workspace-tabs a[aria-current="location"] { border-color: var(--primary); color: var(--text-primary); font-weight: 700; }
+@media (prefers-reduced-motion: reduce) { .skeleton { animation: none; } }

@@ -1,0 +1,7 @@
+{% load portal_tags %}<div class="conversation">
+  {% for message in item.responses.all %}<article class="{% if message.author_id == item.requester_id %}requester-message{% else %}provider-message{% endif %}">
+    <div><b>{{ message.author }}</b><time>{{ message.created_at|jdate }}</time></div>
+    <p>{{ message.body|linebreaksbr }}</p>
+    {% for attachment in message.attachments.all %}{% if can_view_attachments %}<a href="{% url 'attachment_download' attachment.pk %}">دریافت {{ attachment.original_name }}</a>{% else %}<span>{{ attachment.original_name }}</span>{% endif %}{% endfor %}
+  </article>{% empty %}<div class="empty-state"><h3>هنوز پیامی ثبت نشده است</h3><p>گفت‌وگو پس از ارسال نخستین پیام اینجا نمایش داده می‌شود.</p></div>{% endfor %}
+</div>

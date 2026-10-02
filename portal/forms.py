@@ -3,11 +3,18 @@ from django import forms
 from django.conf import settings
 from django.contrib.auth.forms import AuthenticationForm
 from django.utils import timezone
-from .models import Attachment, Category, Department, Request, RoleAssignment, Service, ServiceFormField, User
+from .models import AppearanceSetting, Attachment, Category, Department, Request, RoleAssignment, Service, ServiceFormField, User
 
 class LoginForm(AuthenticationForm):
     username=forms.CharField(label="نام کاربری",widget=forms.TextInput(attrs={"autofocus":True,"autocomplete":"username"}))
     password=forms.CharField(label="رمز عبور",strip=False,widget=forms.PasswordInput(attrs={"autocomplete":"current-password"}))
+
+class AppearanceForm(forms.ModelForm):
+    class Meta:
+        model=AppearanceSetting
+        fields=["app_name","logo","primary_color","accent_color","base_font_size","font_family"]
+        labels={"app_name":"نام سامانه","logo":"لوگو (PNG، حداکثر ۱ مگابایت)","primary_color":"رنگ اصلی","accent_color":"رنگ تأکیدی","base_font_size":"اندازه پایه قلم","font_family":"قلم"}
+        widgets={"primary_color":forms.TextInput(attrs={"type":"color"}),"accent_color":forms.TextInput(attrs={"type":"color"})}
 
 class RequestBaseForm(forms.ModelForm):
     class Meta:
@@ -33,6 +40,8 @@ class RequestBaseForm(forms.ModelForm):
             elif f.field_type==ServiceFormField.FieldType.FILE: field=forms.FileField(required=required)
             else: field=forms.CharField(widget=forms.TextInput(attrs=attrs),required=required)
             field.label=f.label; field.help_text=f.help_text; self.fields[f"data_{f.key}"]=field
+            if f.field_type==ServiceFormField.FieldType.FILE:
+                field.widget.attrs.update({"data-file-preview":"true","data-max-size":str(settings.MAX_UPLOAD_SIZE),"accept":",".join("."+extension for extension in sorted(settings.ALLOWED_UPLOAD_EXTENSIONS))})
             if self.instance.pk and f.key in self.instance.request_data: self.initial[f"data_{f.key}"]=self.instance.request_data[f.key]
     def clean_desired_delivery_date(self):
         value=self.cleaned_data.get("desired_delivery_date")
@@ -55,6 +64,14 @@ class RequestBaseForm(forms.ModelForm):
         return cleaned
     def dynamic_files(self): return [v for k,v in self.cleaned_data.items() if k.startswith("data_") and hasattr(v,"read")]
 
+    def mark_errors_for_accessibility(self):
+        for name in self.errors:
+            if name in self.fields:
+                widget=self.fields[name].widget
+                widget.attrs["aria-invalid"]="true"
+                error_id=f"id_{name}_error"
+                widget.attrs["aria-describedby"]=" ".join(filter(None,(widget.attrs.get("aria-describedby"),error_id)))
+
 def request_readiness_errors(obj):
     errors=[]
     if not obj.project.strip(): errors.append("نام طرح یا پروژه")
@@ -69,6 +86,9 @@ def request_readiness_errors(obj):
 class MessageForm(forms.Form):
     body=forms.CharField(label="پیام",widget=forms.Textarea(attrs={"rows":4}),required=True)
     file=forms.FileField(label="پیوست",required=False)
+    def __init__(self,*args,**kwargs):
+        super().__init__(*args,**kwargs)
+        self.fields["file"].widget.attrs.update({"data-file-preview":"true","data-max-size":str(settings.MAX_UPLOAD_SIZE),"accept":",".join("."+extension for extension in sorted(settings.ALLOWED_UPLOAD_EXTENSIONS))})
     def clean_file(self):
         f=self.cleaned_data.get("file")
         if not f:return f

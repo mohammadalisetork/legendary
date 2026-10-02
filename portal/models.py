@@ -261,5 +261,23 @@ class AppSetting(Timestamped):
     key=models.CharField(max_length=100,unique=True); value=models.JSONField(default=dict)
     def __str__(self): return self.key
 
+class AppearanceSetting(Timestamped):
+    """Single row (pk=1); defaults apply without seeding during an upgrade."""
+    from .appearance import DEFAULT_ACCENT, DEFAULT_NAME, DEFAULT_PRIMARY, FONT_CHOICES, brand_logo_path, validate_brand_color, validate_png_logo
+    app_name=models.CharField(max_length=100,default=DEFAULT_NAME)
+    primary_color=models.CharField(max_length=7,default=DEFAULT_PRIMARY,validators=[validate_brand_color])
+    accent_color=models.CharField(max_length=7,default=DEFAULT_ACCENT,validators=[validate_brand_color])
+    base_font_size=models.PositiveSmallIntegerField(default=15,choices=[(x,str(x)) for x in range(14,19)])
+    font_family=models.CharField(max_length=16,default="system",choices=FONT_CHOICES)
+    logo=models.FileField(upload_to=brand_logo_path,blank=True,validators=[validate_png_logo])
+
+    def save(self,*args,**kwargs):
+        if self.pk not in (None,1): raise ValidationError("فقط یک تنظیم ظاهر مجاز است.")
+        self.pk=1
+        self.full_clean()
+        return super().save(*args,**kwargs)
+
+    def __str__(self): return self.app_name
+
 class LoginThrottle(models.Model):
     key=models.CharField(max_length=64,unique=True); failures=models.PositiveSmallIntegerField(default=0); locked_until=models.DateTimeField(null=True,blank=True); updated_at=models.DateTimeField(auto_now=True)

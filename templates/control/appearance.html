@@ -1,0 +1,13 @@
+{% extends 'base.html' %}{% block title %}ظاهر سامانه | {{ appearance.app_name }}{% endblock %}{% block heading %}ظاهر سامانه{% endblock %}{% block content %}
+<div class="page-head"><div><h1>ظاهر سامانه</h1><p>نام، لوگو و رنگ‌ها برای همه کاربران اعمال می‌شوند. تغییرات را پیش از ذخیره در همین صفحه ببینید.</p></div></div>
+<div class="two-col">
+  <form method="post" enctype="multipart/form-data" class="panel stack" novalidate data-submit-guard data-appearance-form>{% csrf_token %}
+    {{ form.non_field_errors }}
+    {% for field in form %}<p><label for="{{ field.id_for_label }}">{{ field.label }}</label>{{ field }}{% if field.help_text %}<small class="helptext">{{ field.help_text }}</small>{% endif %}{{ field.errors }}</p>{% endfor %}
+    <div class="form-actions"><button type="submit" class="btn btn-md primary">ذخیره ظاهر</button></div>
+  </form>
+  <aside><section class="panel"><h2>پیش‌نمایش</h2><div class="appearance-preview" data-appearance-preview><h3 class="preview-title" data-preview-name>{{ current_appearance.app_name }}</h3><p>نمونه متن فارسی و English برای بررسی خوانایی قلم و اندازه.</p><span class="btn btn-md primary">دکمه اصلی</span> <span class="btn btn-md secondary">دکمه ثانویه</span></div>{% if current_appearance.logo %}<p><img src="{% url 'brand_logo' %}" alt="لوگوی فعلی" width="64" height="64" class="brand-logo"></p>{% endif %}</section>
+    <form method="post" class="panel stack" novalidate data-submit-guard>{% csrf_token %}<p>بازگرداندن رنگ، قلم، نام و لوگوی پیش‌فرض.</p><button type="submit" name="reset" value="1" class="btn btn-md secondary">بازگشت به ظاهر پیش‌فرض</button></form>
+  </aside>
+</div>
+{% endblock %}

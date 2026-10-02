@@ -12,8 +12,9 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
 from django.views.decorators.http import require_POST
-from .forms import DepartmentForm, DepartmentLifecycleForm, DepartmentMembershipForm, InternalNoteForm, LoginForm, ManagerActionForm, MessageForm, RequestBaseForm, ServiceFamilyForm, ServiceManagementForm, request_readiness_errors, save_upload
-from .models import Attachment, Category, Department, InternalNote, LoginThrottle, Notification, Request, RequestResponse, RoleAssignment, Service, User
+from .appearance import DEFAULT_ACCENT, DEFAULT_NAME, DEFAULT_PRIMARY
+from .forms import AppearanceForm, DepartmentForm, DepartmentLifecycleForm, DepartmentMembershipForm, InternalNoteForm, LoginForm, ManagerActionForm, MessageForm, RequestBaseForm, ServiceFamilyForm, ServiceManagementForm, request_readiness_errors, save_upload
+from .models import AppearanceSetting, Attachment, Category, Department, InternalNote, LoginThrottle, Notification, Request, RequestResponse, RoleAssignment, Service, User
 from .policies import Action, authorized_departments, can, can_access_control, department_ids_for_role, is_super_admin, request_scope
 from .utils import apply_submission_timing, audit, history, notify, transition
 
@@ -50,6 +51,27 @@ def health(request):
         with connection.cursor() as c: c.execute("SELECT 1"); c.fetchone()
         return JsonResponse({"status":"ok","database":"ok"})
     except Exception: return JsonResponse({"status":"degraded","database":"unavailable"},status=503)
+
+def brand_logo(request):
+    appearance=AppearanceSetting.objects.filter(pk=1).first()
+    if not appearance or not appearance.logo: raise Http404
+    try: return FileResponse(appearance.logo.open("rb"),content_type="image/png")
+    except (OSError,FileNotFoundError): raise Http404
+
+@login_required
+def appearance_settings(request):
+    if not is_super_admin(request.user): raise PermissionDenied
+    appearance=AppearanceSetting.objects.filter(pk=1).first() or AppearanceSetting()
+    if request.method=="POST" and request.POST.get("reset"):
+        appearance.app_name=DEFAULT_NAME; appearance.primary_color=DEFAULT_PRIMARY; appearance.accent_color=DEFAULT_ACCENT
+        appearance.base_font_size=15; appearance.font_family="system"; appearance.logo=""; appearance.save()
+        audit(request.user,"APPEARANCE_RESET",appearance); messages.success(request,"ظاهر پیش‌فرض بازگردانده شد.")
+        return redirect("appearance_settings")
+    form=AppearanceForm(request.POST or None,request.FILES or None,instance=appearance)
+    if request.method=="POST" and form.is_valid():
+        form.save(); audit(request.user,"APPEARANCE_UPDATED",appearance,{"fields":list(form.changed_data)})
+        messages.success(request,"تنظیمات ظاهر ذخیره شد."); return redirect("appearance_settings")
+    return render(request,"control/appearance.html",{"form":form,"current_appearance":appearance})
 
 def fa_digits(v): return str(v).translate(str.maketrans("0123456789","۰۱۲۳۴۵۶۷۸۹"))
 
@@ -104,7 +126,8 @@ def request_create(request,service_id):
         history(obj,request.user,"REQUEST_CREATED")
         if request.POST.get("action")=="submit": return submit_request(request,obj.pk)
         messages.success(request,"پیش‌نویس ذخیره شد."); return redirect("request_detail",pk=obj.pk)
-    return render(request,"portal/request_form.html",{"service":service,"form":form,"breadcrumbs":[{"label":"مرکز خدمات","href":reverse("service_hub")},{"label":service.department.name,"href":reverse("department_landing",args=[service.department.code])},{"label":service.category.name},{"label":service.name,"href":reverse("service_detail",args=[service.pk])},{"label":"ثبت درخواست"}]})
+    if request.method=="POST": form.mark_errors_for_accessibility()
+    return render(request,"portal/request_form.html",{"service":service,"form":form,"form_base_fields":[form[name] for name in ("project","title","priority","desired_delivery_date") if name in form.fields],"form_dynamic_fields":[form[name] for name in form.fields if name.startswith("data_")],"breadcrumbs":[{"label":"مرکز خدمات","href":reverse("service_hub")},{"label":service.department.name,"href":reverse("department_landing",args=[service.department.code])},{"label":service.category.name},{"label":service.name,"href":reverse("service_detail",args=[service.pk])},{"label":"ثبت درخواست"}]})
 
 def accessible_request(user,pk,manager=False):
     qs=Request.objects.select_related("department","service__category__department","requester","assigned_owner")
@@ -115,7 +138,7 @@ def accessible_request(user,pk,manager=False):
 @login_required
 def request_detail(request,pk):
     obj=accessible_request(request.user,pk)
-    return render(request,"portal/request_detail.html",{"item":obj,"message_form":MessageForm(),"can_edit":obj.status==Request.Status.DRAFT})
+    return render(request,"portal/request_detail.html",{"item":obj,"message_form":MessageForm(),"can_edit":obj.status==Request.Status.DRAFT,"public_history":obj.history.exclude(action="INTERNAL_NOTE_ADDED"),"can_view_attachments":True})
 
 @login_required
 def request_edit(request,pk):
@@ -128,7 +151,8 @@ def request_edit(request,pk):
         history(obj,request.user,"DRAFT_UPDATED")
         if request.POST.get("action")=="submit": return submit_request(request,obj.pk)
         messages.success(request,"پیش‌نویس ذخیره شد."); return redirect("request_detail",pk=pk)
-    return render(request,"portal/request_form.html",{"service":obj.service,"form":form,"item":obj})
+    if request.method=="POST": form.mark_errors_for_accessibility()
+    return render(request,"portal/request_form.html",{"service":obj.service,"form":form,"item":obj,"form_base_fields":[form[name] for name in ("project","title","priority","desired_delivery_date") if name in form.fields],"form_dynamic_fields":[form[name] for name in form.fields if name.startswith("data_")]})
 
 @login_required
 @require_POST
@@ -150,10 +174,13 @@ def submit_request(request,pk):
 @login_required
 def my_requests(request):
     items=Request.objects.filter(requester=request.user).select_related("department","service","assigned_owner")
+    drafts=request.path.endswith("drafts/")
+    if drafts: items=items.filter(status=Request.Status.DRAFT)
     status=request.GET.get("status",""); q=request.GET.get("q","")
     if status: items=items.filter(status=status)
     if q: items=items.filter(Q(public_id__icontains=q)|Q(title__icontains=q)|Q(service__name__icontains=q))
-    return render(request,"portal/request_list.html",{"items":items,"statuses":Request.Status.choices,"status":status,"q":q,"drafts":request.path.endswith("drafts/")})
+    page=Paginator(items,25).get_page(request.GET.get("page"))
+    return render(request,"portal/request_list.html",{"items":page,"page":page,"statuses":Request.Status.choices,"status":status,"q":q,"drafts":drafts})
 
 @login_required
 @require_POST
@@ -166,7 +193,7 @@ def add_message(request,pk):
         history(obj,request.user,"REQUESTER_RESPONDED")
         if obj.status==Request.Status.NEED_INFO: transition(obj,Request.Status.UNDER_REVIEW,request.user)
         notify(obj.assigned_owner,"پاسخ درخواست‌دهنده",f"برای {obj.public_id} پاسخ جدید ثبت شد.",obj); messages.success(request,"پاسخ ثبت شد.")
-    else: messages.error(request,"پیام یا فایل معتبر نیست.")
+    else: messages.error(request,"پیام یا فایل معتبر نیست: "+" ".join(error for errors in form.errors.values() for error in errors))
     return redirect("request_detail",pk=pk)
 
 @login_required
