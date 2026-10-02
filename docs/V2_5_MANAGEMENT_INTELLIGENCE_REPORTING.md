@@ -1,0 +1,31 @@
+# Release 2.5 — Management intelligence and reporting
+
+## Architecture and source data
+
+`portal/reporting.py` is a read-only projection of the existing operational tables: Request, RequestHistory, ApprovalCase/Step, WorkingCalendar, CreditAllocation and CreditReservation. It does not create a warehouse or change request workflow. The analytical grain is one submitted request. One scoped queryset with select/prefetch materializes related events and computes facts; dashboard, Excel and PDF reuse these facts. Every report request reads current operational state. There is no historical as-of status reconstruction.
+
+The cohort `N` uses submission timestamps within the inclusive selected local-date window. Drafts and records without a submission timestamp are excluded. Completion-event throughput is counted separately: it includes requests submitted before this period that completed inside it. The submitted cohort's completion count and event throughput therefore differ intentionally. The shared [KPI dictionary](V2_5_KPI_DICTIONARY.md) specifies denominators, statuses, calendars and missing-value rules.
+
+Dimensions are Department, Program, Project, Service Family, Service, status, priority, requester, requesting unit and owner. Historical labels come from `catalogue_snapshot` and Program/Project submission snapshots when present. A pre-snapshot name can fall back to the current related label; absent Program/Project is displayed as `قدیمی / نگاشت‌نشده`. Historical records are retained, not backfilled or silently dropped. Current entity ID filters preserve association; a grouped historical label can be split from a later renamed label, and drill-down carries the historical label.
+
+## Periods and navigation
+
+Available periods: today, last 7/30 days, current Jalali month/quarter, six Jalali months, Jalali year to date/full year and custom inclusive ISO dates. The UI displays Jalali dates; ISO is used for the native date input. Previous comparisons use the immediately preceding equivalent elapsed range, using Jalali calendar boundaries where relevant. The Department/Program/Service dashboard route forces its dimension and carries it through drill-down, Excel and PDF. Project, Family and Service selectors hide incompatible choices in the UI; the server intersects all filters and enforces role scope independently.
+
+The server-rendered Django templates use vendored Chart.js 4.5.0 with Persian RTL labels. The executive view has trend, workload, status, SLA, service, resolution, aging, owner, request flow, priority, Program × Department and credit visualizations. Grouped tables and supported chart bars link to filtered request metadata. No Program/Department “best/worst” score is assigned.
+
+## Access and outputs
+
+Super Admin, global Executive Viewer and Supervisor see submitted analytics across departments. Department Lead sees own department; Request Manager sees assigned, unassigned or default-owner operational requests in own department outside provider hold; Program and Project Managers see their managed demand. Ordinary requesters have no analytical routes. Aggregate permission never grants operational request detail: the request list adds a detail URL only after existing request policies authorize it. Executive Viewer receives sanitized metadata, without internal notes or conversation content. Supervisor remains read-only. Dashboard, list, Excel and PDF reapply the same scope on the server.
+
+Excel exports one filtered request per row with request ID, submission/creation/completion dates, historical dimensions, priority/status, requester/owner, first response and resolution seconds, SLA flags and approval waits. User-controlled strings that resemble spreadsheet formulas are escaped. Standard and selected-section custom PDFs are generated synchronously by ReportLab; they contain a branded cover, period/filters, summary, demand, SLA, department, program/project, family/service, credit, approvals and optional 100-row appendix. The full authorized detail is in Excel. The PDF uses embedded DejaVu Sans and Arabic shaping/bidi to render Persian, appearance name/colors/logo, and page numbers. Significant exports/report generations are recorded in ActivityLog; dashboard page views are not.
+
+## SLA and limitations
+
+The active working calendar/weekends/holidays controls operational duration. Without a calendar elapsed wall seconds are used. Recorded clock pauses and ApprovalSteps with `pauses_sla=True` are unioned before subtraction; other approval waits remain included as configured by 2.3. First-response and latest-delivery deadlines come from stored request fields. `REPORT_AT_RISK_RATIO` defaults to `0.8`, must be within `(0,1]`, and is applied to the applicable operational budget for open requests. Request age is **calendar days**, deliberately separate from SLA working time. Percentiles need five valid observations. Missing deadlines, responses and mapping remain unavailable rather than invented.
+
+No database migration is added. Existing 2.4 migrations and historical requests remain intact. Pre-2.4 catalogue definitions that were not saved cannot be reconstructed. Current status and edited priority appear live; these reports are not an immutable as-of warehouse. A filtered cohort is held in worker memory and PDFs are synchronous; load testing on production-like volume and sizing of workers/timeouts belong to the later hardening stage. Related-object prefetching and batched drill-down policy checks avoid request-level N+1 reads. PostgreSQL query plans, concurrency, Docker runtime and browser review remain infrastructure-dependent.
+
+## Deployment notes
+
+Install pinned `requirements.txt`, run the existing migration/collectstatic flow and use the reverse proxy already documented in README. Vendored Chart.js and DejaVu font/licenses are part of the repository; no CDN or browser renderer is needed for PDF. Routes: `/analytics/`, `/analytics/departments/<code>/`, `/analytics/programs/<id>/`, `/analytics/services/<id>/`, `/analytics/requests/`, `/analytics/export.xlsx`, `/analytics/report.pdf`.

@@ -1,7 +1,14 @@
 from django.contrib.auth import views as auth_views
 from django.urls import path
-from . import views, governance_views, catalogue_views
+from . import views, governance_views, catalogue_views, reporting_views
 urlpatterns=[
+ path('analytics/',reporting_views.dashboard,name='analytics_dashboard'),
+ path('analytics/departments/<slug:code>/',reporting_views.dashboard,{'kind':'department'},name='analytics_department'),
+ path('analytics/programs/<int:pk>/',reporting_views.dashboard,{'kind':'program'},name='analytics_program'),
+ path('analytics/services/<int:pk>/',reporting_views.dashboard,{'kind':'service'},name='analytics_service'),
+ path('analytics/requests/',reporting_views.request_list,name='analytics_requests'),
+ path('analytics/export.xlsx',reporting_views.export_excel,name='analytics_excel'),
+ path('analytics/report.pdf',reporting_views.export_pdf,name='analytics_pdf'),
  path('capacity/balance/',governance_views.capacity_balance,name='capacity_balance'),
  path('capacity/',governance_views.capacity_dashboard,name='capacity_dashboard'),
  path('capacity/priorities/<int:pk>/',governance_views.manage_priority_policy,name='manage_priority_policy'),

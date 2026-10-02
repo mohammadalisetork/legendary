@@ -63,6 +63,8 @@ else:
     STORAGES["default"]={"BACKEND":"django.core.files.storage.FileSystemStorage"}
     MEDIA_ROOT=Path(os.getenv("UPLOAD_PATH", BASE_DIR/"uploads")); MEDIA_URL="/media/"
 MAX_UPLOAD_SIZE=int(os.getenv("MAX_UPLOAD_SIZE", 10*1024*1024))
+REPORT_AT_RISK_RATIO=float(os.getenv("REPORT_AT_RISK_RATIO", "0.8"))
+if not 0 < REPORT_AT_RISK_RATIO <= 1: raise RuntimeError("REPORT_AT_RISK_RATIO must be in (0, 1]")
 LOGIN_MAX_FAILURES=int(os.getenv("LOGIN_MAX_FAILURES","5")); LOGIN_LOCK_MINUTES=int(os.getenv("LOGIN_LOCK_MINUTES","15"))
 ALLOWED_UPLOAD_EXTENSIONS=set(os.getenv("ALLOWED_UPLOAD_EXTENSIONS","pdf,doc,docx,xls,xlsx,ppt,pptx,png,jpg,jpeg,zip").lower().split(","))
 LOGIN_URL="login"; LOGIN_REDIRECT_URL="home"; LOGOUT_REDIRECT_URL="login"

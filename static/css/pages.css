@@ -57,3 +57,27 @@
 .manage-section .notification { align-items: center; }
 @media (max-width: 980px) { .program-dashboard-grid { grid-template-columns: 1fr; } }
 @media (max-width: 780px) { .journey-stages { grid-template-columns: 1fr; } .journey-stages li { text-align: right; border-inline-end: 0; border-bottom: 1px solid var(--border); } }
+.report-filters { padding: 18px; margin-bottom: 16px; }
+.report-filter-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(165px, 1fr)); gap: 10px 14px; }
+.report-filter-grid label { display: grid; gap: 5px; font-size: 12px; color: var(--text-secondary); }
+.report-filter-grid select, .report-filter-grid input { width: 100%; min-width: 0; }
+.report-filters .hint { margin: 12px 0; }
+.report-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(175px, 1fr)); gap: 10px; margin: 17px 0; }
+.report-kpis > * { display: grid; gap: 4px; padding: 13px 15px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface); color: var(--text-primary); text-decoration: none; }
+.report-kpis > a:hover, .report-kpis > a:focus-visible { border-color: var(--primary); }
+.report-kpis b { font-size: 1.28rem; line-height: 1.3; font-weight: 750; }
+.report-kpis span { font-size: 12px; }
+.report-kpis small { color: var(--text-muted); }
+.report-chart-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin-bottom: 18px; }
+.report-chart-grid > .panel { min-width: 0; padding: 15px; }
+.report-chart-grid h2, .report-table h2, .report-downloads h2 { margin: 0 0 14px; font-size: 1rem; }
+.report-chart-grid canvas { width: 100% !important; height: 240px !important; }
+.report-table { margin-bottom: 16px; }
+.report-two-col { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.report-inline-stats { display: flex; gap: 9px 20px; flex-wrap: wrap; }
+.report-inline-stats span { font-size: 13px; }
+.report-downloads { display: flex; align-items: flex-start; flex-wrap: wrap; gap: 12px; margin-top: 16px; }
+.report-downloads h2 { width: 100%; }
+.report-custom-form fieldset { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 10px 14px; margin-bottom: 10px; }
+.report-custom-form label { display: inline-flex; align-items: center; gap: 5px; margin: 4px 12px; white-space: nowrap; }
+@media (max-width: 980px) { .report-chart-grid, .report-two-col { grid-template-columns: 1fr; } }
