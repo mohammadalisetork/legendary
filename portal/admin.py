@@ -37,10 +37,13 @@ class ServiceFieldInline(admin.TabularInline): model=ServiceFormField; extra=1
 @admin.register(Service)
 class ServiceAdmin(AuditAdminMixin,admin.ModelAdmin):
     list_display=("code","name","category","provider_department","domain","initial_response_days","delivery_min_days","delivery_max_days","default_owner","active")
-    list_filter=("active","domain","category__department","category"); search_fields=("code","name","full_description"); ordering=("category","display_order"); inlines=(ServiceFieldInline,)
+    list_filter=("active","domain","category__department","category"); search_fields=("code","name","full_description"); ordering=("category","display_order"); inlines=(ServiceFieldInline,); exclude=("lifecycle_status",)
     actions=("duplicate_services",)
     @admin.display(description="اداره ارائه‌دهنده",ordering="category__department")
     def provider_department(self,obj): return obj.category.department
+    def save_model(self,request,obj,form,change):
+        obj.lifecycle_status=Service.Status.ACTIVE if obj.active else Service.Status.DISABLED
+        super().save_model(request,obj,form,change)
     @admin.action(description="تکثیر خدمت انتخاب‌شده")
     def duplicate_services(self,request,queryset):
         for service in queryset:
@@ -48,7 +51,11 @@ class ServiceAdmin(AuditAdminMixin,admin.ModelAdmin):
             for f in fields: f.pk=None; f.service=service; f.save()
 
 @admin.register(Category)
-class CategoryAdmin(AuditAdminMixin,admin.ModelAdmin): list_display=("name","department","display_order","active"); list_filter=("department","active"); list_editable=("display_order","active"); prepopulated_fields={"slug":("name",)}
+class CategoryAdmin(AuditAdminMixin,admin.ModelAdmin):
+    list_display=("name","department","display_order","active"); list_filter=("department","active"); list_editable=("display_order","active"); prepopulated_fields={"slug":("name",)}; exclude=("lifecycle_status",)
+    def save_model(self,request,obj,form,change):
+        obj.lifecycle_status=Category.Status.ACTIVE if obj.active else Category.Status.DISABLED
+        super().save_model(request,obj,form,change)
 @admin.register(ServiceFormField)
 class ServiceFormFieldAdmin(AuditAdminMixin,admin.ModelAdmin): list_display=("label","service","field_type","required","display_order","active"); list_filter=("field_type","required","active","service")
 @admin.register(WorkingCalendar)

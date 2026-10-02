@@ -18,7 +18,7 @@ class ProgramProjectMigrationUpgradeTests(TransactionTestCase):
         Category = old_apps.get_model('portal', 'Category')
         Service = old_apps.get_model('portal', 'Service')
         Request = old_apps.get_model('portal', 'Request')
-        user = User.objects.create(username='migration-user', password='not-a-login', full_name='Legacy', email='legacy@example.invalid')
+        user = User.objects.create(username='migration-user', password='!', full_name='Legacy', email='legacy@example.invalid')
         department = Department.objects.create(code='migration-dept', name='Migration Department', status='PUBLISHED')
         category = Category.objects.create(name='Migration Family', slug='migration-family', department=department)
         service = Service.objects.create(code='MG-01', name='Migration Service', domain='test', full_description='test', category=category)

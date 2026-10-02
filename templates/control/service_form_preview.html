@@ -1,0 +1,4 @@
+{% extends 'base.html' %}{% block title %}پیش‌نمایش فرم | {{ service.name }}{% endblock %}{% block heading %}پیش‌نمایش فرم درخواست{% endblock %}{% block content %}
+<div class="page-banner">پیش‌نمایش فقط برای مدیران مجاز است؛ مقادیر واردشده ثبت نمی‌شوند.</div><div class="page-head"><div><small>{{ department.name }} · {{ service.code }}</small><h1>{{ service.name }}</h1></div><a class="btn btn-sm secondary" href="{% url 'service_fields' service.pk %}">بازگشت به طراح فرم</a></div>
+<section class="panel stack narrow"><h2>اطلاعات درخواست</h2>{% for field in form %}<p><label for="{{ field.id_for_label }}">{{ field.label }}{% if field.field.required %} <span aria-hidden="true">*</span>{% endif %}</label>{{ field }}{% if field.help_text %}<small class="helptext">{{ field.help_text }}</small>{% endif %}</p>{% endfor %}<div class="page-banner">ارسال در صفحهٔ پیش‌نمایش غیرفعال است.</div></section>
+{% endblock %}

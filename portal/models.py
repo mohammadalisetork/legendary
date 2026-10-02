@@ -40,17 +40,20 @@ class Department(Timestamped):
         DRAFT="DRAFT","پیش‌نویس"
         PUBLISHED="PUBLISHED","منتشرشده"
         DISABLED="DISABLED","غیرفعال"
+        TEMPORARILY_DISABLED="TEMPORARILY_DISABLED","موقتاً غیرفعال"
         ARCHIVED="ARCHIVED","بایگانی‌شده"
     code=models.SlugField(max_length=64,unique=True)
     name=models.CharField(max_length=200)
     short_name=models.CharField(max_length=100,blank=True)
     description=models.TextField(blank=True)
     intro_text=models.TextField(blank=True)
-    status=models.CharField(max_length=16,choices=Status.choices,default=Status.DRAFT,db_index=True)
+    icon_name=models.CharField(max_length=40,blank=True)
+    cover_image=models.FileField(upload_to="departments/covers/",blank=True)
+    status=models.CharField(max_length=24,choices=Status.choices,default=Status.DRAFT,db_index=True)
     display_order=models.PositiveIntegerField(default=0)
     class Meta:
         ordering=["display_order","name"]
-        constraints=[models.CheckConstraint(condition=models.Q(status__in=["DRAFT","PUBLISHED","DISABLED","ARCHIVED"]),name="valid_department_status")]
+        constraints=[models.CheckConstraint(condition=models.Q(status__in=["DRAFT","PUBLISHED","DISABLED","TEMPORARILY_DISABLED","ARCHIVED"]),name="valid_department_status")]
     @property
     def is_requestable(self): return self.status==self.Status.PUBLISHED
     def __str__(self): return self.short_name or self.name
@@ -188,28 +191,36 @@ class RoleAssignment(Timestamped):
         return f"{self.user} · {self.get_role_display()} · {scope}"
 
 class Category(Timestamped):
+    class Status(models.TextChoices): ACTIVE="ACTIVE","فعال"; DISABLED="DISABLED","غیرفعال"; ARCHIVED="ARCHIVED","بایگانی‌شده"
     name=models.CharField(max_length=160); slug=models.SlugField(max_length=180,allow_unicode=True)
     department=models.ForeignKey(Department,on_delete=models.PROTECT,related_name="service_families")
-    description=models.TextField(blank=True); active=models.BooleanField(default=True); display_order=models.PositiveIntegerField(default=0)
+    description=models.TextField(blank=True); active=models.BooleanField(default=True); lifecycle_status=models.CharField(max_length=12,choices=Status.choices,default=Status.ACTIVE); display_order=models.PositiveIntegerField(default=0)
     class Meta:
         ordering=["department__display_order","display_order","name"]
         verbose_name="خانواده خدمت"
         verbose_name_plural="خانواده‌های خدمت"
-        constraints=[models.UniqueConstraint(fields=["department","name"],name="unique_department_category_name"),models.UniqueConstraint(fields=["department","slug"],name="unique_department_category_slug")]
+        constraints=[models.UniqueConstraint(fields=["department","name"],name="unique_department_category_name"),models.UniqueConstraint(fields=["department","slug"],name="unique_department_category_slug"),models.CheckConstraint(condition=models.Q(lifecycle_status__in=["ACTIVE","DISABLED","ARCHIVED"]),name="valid_category_lifecycle")]
         indexes=[models.Index(fields=["department","active"],name="portal_cate_departm_762dfa_idx")]
     def clean(self):
         super().clean()
+        if not self.pk and self.lifecycle_status==self.Status.ARCHIVED:raise ValidationError({"lifecycle_status":"خانوادهٔ جدید را نمی‌توان بایگانی‌شده ساخت."})
         if self.pk and self.department_id:
+            old_status=Category.objects.filter(pk=self.pk).values_list("lifecycle_status",flat=True).first()
+            allowed={self.Status.ACTIVE:{self.Status.DISABLED,self.Status.ARCHIVED},self.Status.DISABLED:{self.Status.ACTIVE,self.Status.ARCHIVED},self.Status.ARCHIVED:set()}
+            if old_status and self.lifecycle_status!=old_status and self.lifecycle_status not in allowed[old_status]:raise ValidationError({"lifecycle_status":"تغییر وضعیت خانواده مجاز نیست."})
             from .policies import can_be_default_owner
             for service in self.services.select_related("default_owner").exclude(default_owner=None):
                 if not can_be_default_owner(service.default_owner,self.department):
                     raise ValidationError({"department":f"مسئول پیش‌فرض خدمت {service.code} عضو اداره مقصد نیست."})
     def save(self,*a,**kw):
+        if self.lifecycle_status!=self.Status.ACTIVE:self.active=False
+        elif not self.active:self.lifecycle_status=self.Status.DISABLED
         self.full_clean()
         super().save(*a,**kw)
     def __str__(self): return self.name
 
 class Service(Timestamped):
+    class Status(models.TextChoices): ACTIVE="ACTIVE","فعال"; DISABLED="DISABLED","غیرفعال"; ARCHIVED="ARCHIVED","بایگانی‌شده"
     code=models.CharField(max_length=20,unique=True); name=models.CharField(max_length=200); category=models.ForeignKey(Category,on_delete=models.PROTECT,related_name="services")
     domain=models.CharField(max_length=160); short_description=models.TextField(blank=True); full_description=models.TextField()
     purpose=models.TextField(blank=True); scope=models.TextField(blank=True); deliverables=models.TextField(blank=True); required_inputs=models.TextField(blank=True)
@@ -220,25 +231,34 @@ class Service(Timestamped):
     review_target_days=models.PositiveSmallIntegerField(null=True,blank=True)
     delivery_min_days=models.PositiveSmallIntegerField(default=5); delivery_max_days=models.PositiveSmallIntegerField(default=10)
     maximum_duration_days=models.PositiveSmallIntegerField(null=True,blank=True)
-    supports_desired_date=models.BooleanField(default=True); active=models.BooleanField(default=True); display_order=models.PositiveIntegerField(default=0)
-    class Meta: ordering=["category__display_order","display_order","code"]; indexes=[models.Index(fields=["active","category"])]
+    supports_desired_date=models.BooleanField(default=True); active=models.BooleanField(default=True); lifecycle_status=models.CharField(max_length=12,choices=Status.choices,default=Status.ACTIVE); display_order=models.PositiveIntegerField(default=0)
+    class Meta: ordering=["category__display_order","display_order","code"]; indexes=[models.Index(fields=["active","category"])]; constraints=[models.CheckConstraint(condition=models.Q(lifecycle_status__in=["ACTIVE","DISABLED","ARCHIVED"]),name="valid_service_lifecycle")]
     @property
     def department(self): return self.category.department
     @property
-    def is_requestable(self): return self.active and self.category.active and self.category.department.is_requestable
+    def is_requestable(self): return self.active and self.lifecycle_status==self.Status.ACTIVE and self.category.active and self.category.lifecycle_status==Category.Status.ACTIVE and self.category.department.is_requestable
     def clean(self):
         super().clean()
+        if not self.pk and self.lifecycle_status==self.Status.ARCHIVED:raise ValidationError({"lifecycle_status":"خدمت جدید را نمی‌توان بایگانی‌شده ساخت."})
+        if self.pk:
+            old_status=Service.objects.filter(pk=self.pk).values_list("lifecycle_status",flat=True).first()
+            allowed={self.Status.ACTIVE:{self.Status.DISABLED,self.Status.ARCHIVED},self.Status.DISABLED:{self.Status.ACTIVE,self.Status.ARCHIVED},self.Status.ARCHIVED:set()}
+            if old_status and self.lifecycle_status!=old_status and self.lifecycle_status not in allowed[old_status]:raise ValidationError({"lifecycle_status":"تغییر وضعیت خدمت مجاز نیست."})
+        if self.delivery_min_days and self.delivery_max_days and self.delivery_max_days<self.delivery_min_days:
+            raise ValidationError({"delivery_max_days":"حداکثر زمان انجام باید برابر یا بیشتر از حداقل باشد."})
         if self.default_owner_id:
             from .policies import can_be_default_owner
             if not can_be_default_owner(self.default_owner,self.category.department):
                 raise ValidationError({"default_owner":"مسئول پیش‌فرض باید مدیر درخواست یا مدیر همین اداره باشد."})
     def save(self,*a,**kw):
+        if self.lifecycle_status!=self.Status.ACTIVE:self.active=False
+        elif not self.active:self.lifecycle_status=self.Status.DISABLED
         self.full_clean()
         super().save(*a,**kw)
     def __str__(self): return f"{self.code} · {self.name}"
 
 class ServiceFormField(Timestamped):
-    class FieldType(models.TextChoices): TEXT="text","متن کوتاه"; TEXTAREA="textarea","متن بلند"; NUMBER="number","عدد"; DATE="date","تاریخ"; SELECT="select","انتخاب"; MULTISELECT="multiselect","چندانتخابی"; CHECKBOX="checkbox","تأیید"; EMAIL="email","ایمیل"; FILE="file","فایل"
+    class FieldType(models.TextChoices): TEXT="text","متن کوتاه"; TEXTAREA="textarea","متن بلند"; NUMBER="number","عدد"; DATE="date","تاریخ"; SELECT="select","انتخاب"; RADIO="radio","گزینه‌های رادیویی"; MULTISELECT="multiselect","چندانتخابی"; CHECKBOX="checkbox","تأیید"; EMAIL="email","ایمیل"; PHONE="phone","تلفن"; FILE="file","فایل"
     service=models.ForeignKey(Service,on_delete=models.CASCADE,related_name="form_fields"); key=models.SlugField(max_length=80,allow_unicode=False)
     label=models.CharField(max_length=200); field_type=models.CharField(max_length=20,choices=FieldType.choices); required=models.BooleanField(default=False)
     placeholder=models.CharField(max_length=250,blank=True); help_text=models.CharField(max_length=500,blank=True); options=models.JSONField(default=list,blank=True); display_order=models.PositiveIntegerField(default=0); active=models.BooleanField(default=True)
@@ -277,7 +297,7 @@ class Request(Timestamped):
     project_name_snapshot=models.CharField(max_length=200,blank=True,default="")
     project_code_snapshot=models.CharField(max_length=64,blank=True,default="")
     requesting_unit=models.CharField(max_length=160); service=models.ForeignKey(Service,on_delete=models.PROTECT,related_name="requests"); project=models.CharField(max_length=200)
-    title=models.CharField(max_length=250); request_data=models.JSONField(default=dict); desired_delivery_date=models.DateField(null=True,blank=True)
+    title=models.CharField(max_length=250); request_data=models.JSONField(default=dict); catalogue_snapshot=models.JSONField(default=dict,blank=True); desired_delivery_date=models.DateField(null=True,blank=True)
     priority=models.CharField(max_length=16,choices=Priority.choices,default=Priority.NORMAL); status=models.CharField(max_length=20,choices=Status.choices,default=Status.DRAFT,db_index=True)
     provider_hold=models.BooleanField(default=False,db_index=True)
     assigned_owner=models.ForeignKey(settings.AUTH_USER_MODEL,null=True,blank=True,on_delete=models.SET_NULL,related_name="assigned_requests")
@@ -297,6 +317,10 @@ class Request(Timestamped):
         if not self.public_id:
             today=timezone.localdate().strftime("%Y%m%d")
             self.public_id=f"MKT-{today}-{uuid.uuid4().hex[:6].upper()}"
+        if not self.catalogue_snapshot and self.service_id:
+            self.catalogue_snapshot={"service_code":self.service.code,"service_name":self.service.name,"department_code":self.service.department.code,"department_name":self.service.department.name,"family_name":self.service.category.name,
+                "service":{key:getattr(self.service,key) for key in ("domain","short_description","full_description","purpose","scope","deliverables","required_inputs","request_requirements","process_information","excluded","service_role","acceptance_criteria","legacy_sla","initial_response_days","review_target_days","delivery_min_days","delivery_max_days","maximum_duration_days","supports_desired_date")},
+                "form_fields":[{"key":f.key,"label":f.label,"field_type":f.field_type,"required":f.required,"options":f.options,"placeholder":f.placeholder,"help_text":f.help_text,"display_order":f.display_order} for f in self.service.form_fields.all()]}
         super().save(*a,**kw)
     @property
     def is_overdue(self):
@@ -379,8 +403,12 @@ class Request(Timestamped):
     def total_approval_wait_seconds(self):return self.approval_wait_seconds()
     @property
     def brief_items(self):
-        labels={f.key:f.label for f in self.service.form_fields.all()}
+        labels={row.get("key"):row.get("label") for row in self.catalogue_snapshot.get("form_fields",[])} or {f.key:f.label for f in self.service.form_fields.all()}
         return [(labels.get(k,k), "، ".join(v) if isinstance(v,list) else ("بله" if v is True else "خیر" if v is False else v)) for k,v in self.request_data.items()]
+    @property
+    def catalogue_service_name(self):return self.catalogue_snapshot.get("service_name") or self.service.name
+    @property
+    def catalogue_department_name(self):return self.catalogue_snapshot.get("department_name") or self.department.name
     def __str__(self): return self.public_id
     def allowed_transitions(self): return self.TRANSITIONS.get(self.status,set())
 
@@ -567,6 +595,23 @@ class RequestHistory(models.Model):
 
 class ActivityLog(models.Model):
     actor=models.ForeignKey(settings.AUTH_USER_MODEL,null=True,on_delete=models.SET_NULL); action=models.CharField(max_length=100); target_type=models.CharField(max_length=60); target_id=models.CharField(max_length=80); metadata=models.JSONField(default=dict,blank=True); created_at=models.DateTimeField(auto_now_add=True)
+    class Meta: ordering=["-created_at"]
+
+class CatalogueImportBatch(models.Model):
+    class Status(models.TextChoices): PREVIEWED="PREVIEWED","پیش‌نمایش"; CONFIRMED="CONFIRMED","تأییدشده"; FAILED="FAILED","ناموفق"
+    department=models.ForeignKey(Department,on_delete=models.PROTECT,related_name="catalogue_imports")
+    uploaded_by=models.ForeignKey(settings.AUTH_USER_MODEL,null=True,on_delete=models.SET_NULL,related_name="catalogue_imports")
+    confirmed_by=models.ForeignKey(settings.AUTH_USER_MODEL,null=True,blank=True,on_delete=models.SET_NULL,related_name="confirmed_catalogue_imports")
+    original_filename=models.CharField(max_length=255)
+    file_size=models.PositiveBigIntegerField(default=0)
+    file_sha256=models.CharField(max_length=64,blank=True)
+    status=models.CharField(max_length=12,choices=Status.choices,default=Status.PREVIEWED)
+    validation_result=models.JSONField(default=dict,blank=True)
+    created_count=models.PositiveIntegerField(default=0)
+    updated_count=models.PositiveIntegerField(default=0)
+    skipped_count=models.PositiveIntegerField(default=0)
+    confirmed_at=models.DateTimeField(null=True,blank=True)
+    created_at=models.DateTimeField(auto_now_add=True)
     class Meta: ordering=["-created_at"]
 
 class Notification(Timestamped):

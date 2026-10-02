@@ -6,20 +6,23 @@ from django.test import TestCase, override_settings
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.urls import reverse
 from django.utils import timezone
+from django.utils.crypto import get_random_string
 from unittest.mock import patch
 from .models import ActivityLog, Category, InternalNote, LoginThrottle, NonWorkingDate, Notification, Request, RequestHistory, Service, ServiceFormField, User, WorkingCalendar
 from .utils import add_working_days, apply_submission_timing, transition
 from .templatetags.portal_tags import jdate
+
+TEST_PASSWORD=get_random_string(32)
 
 class PortalTests(TestCase):
     @classmethod
     def setUpTestData(cls):
         call_command("seed_catalog",verbosity=0)
         cls.service=Service.objects.first()
-        cls.user=User.objects.create_user(username="user",password="Strong-pass-123",full_name="کاربر آزمون",organizational_unit="طرح سلامت",role=User.Role.USER,must_change_password=False)
-        cls.other=User.objects.create_user(username="other",password="Strong-pass-123",full_name="کاربر دیگر",role=User.Role.USER,must_change_password=False)
-        cls.manager=User.objects.create_user(username="manager",password="Strong-pass-123",full_name="مدیر درخواست",role=User.Role.REQUEST_MANAGER,must_change_password=False)
-        cls.admin=User.objects.create_user(username="admin",password="Strong-pass-123",full_name="مدیر سامانه",role=User.Role.ADMIN,must_change_password=False)
+        cls.user=User.objects.create_user(username="user",password=TEST_PASSWORD,full_name="کاربر آزمون",organizational_unit="طرح سلامت",role=User.Role.USER,must_change_password=False)
+        cls.other=User.objects.create_user(username="other",password=TEST_PASSWORD,full_name="کاربر دیگر",role=User.Role.USER,must_change_password=False)
+        cls.manager=User.objects.create_user(username="manager",password=TEST_PASSWORD,full_name="مدیر درخواست",role=User.Role.REQUEST_MANAGER,must_change_password=False)
+        cls.admin=User.objects.create_user(username="admin",password=TEST_PASSWORD,full_name="مدیر سامانه",role=User.Role.ADMIN,must_change_password=False)
         data={f.key:"مقدار آزمون" for f in cls.service.form_fields.filter(active=True,required=True) if f.field_type!=ServiceFormField.FieldType.FILE}
         cls.request=Request.objects.create(requester=cls.user,requesting_unit="طرح سلامت",service=cls.service,project="پروژه الف",title="درخواست آزمون",request_data=data,assigned_owner=cls.manager)
 
@@ -30,7 +33,7 @@ class PortalTests(TestCase):
 
     def test_login_and_protected_page(self):
         self.assertEqual(self.client.get(reverse("home")).status_code,302)
-        response=self.client.post(reverse("login"),{"username":"user","password":"Strong-pass-123"}); self.assertEqual(response.status_code,302)
+        response=self.client.post(reverse("login"),{"username":"user","password":TEST_PASSWORD}); self.assertEqual(response.status_code,302)
         self.assertEqual(self.client.get(reverse("catalog")).status_code,200)
         self.assertEqual(self.client.post(reverse("logout")).status_code,302); self.assertEqual(self.client.get(reverse("home")).status_code,302)
 
@@ -51,7 +54,7 @@ class PortalTests(TestCase):
         self.client.force_login(self.manager)
         self.assertEqual(self.client.get(reverse("control_request_detail",args=[self.request.pk])).status_code,200)
         self.assertEqual(self.client.get(reverse("control_request_detail",args=[unassigned.pk])).status_code,200)
-        other_manager=User.objects.create_user(username="manager2",password="Strong-pass-123",full_name="مدیر دوم",role=User.Role.REQUEST_MANAGER,must_change_password=False)
+        other_manager=User.objects.create_user(username="manager2",password=TEST_PASSWORD,full_name="مدیر دوم",role=User.Role.REQUEST_MANAGER,must_change_password=False)
         assigned_elsewhere=Request.objects.create(requester=self.other,requesting_unit="طرح",service=self.service,project="ج",title="تخصیص دیگر",assigned_owner=other_manager,status=Request.Status.SUBMITTED)
         self.assertEqual(self.client.get(reverse("control_request_detail",args=[assigned_elsewhere.pk])).status_code,404)
         private_draft=Request.objects.create(requester=self.other,requesting_unit="طرح",service=self.service,project="د",title="پیش‌نویس خصوصی")
@@ -126,7 +129,8 @@ class PortalTests(TestCase):
 
     def test_admin_can_create_user_and_edit_catalogue(self):
         self.client.force_login(self.admin)
-        response=self.client.post(reverse("admin:portal_user_add"),{"username":"panel-user","full_name":"کاربر پنل","email":"panel@example.com","organizational_unit":"طرح سلامت","job_title":"مدیر پروژه","role":"USER","password1":"Strong-panel-pass-123!","password2":"Strong-panel-pass-123!","must_change_password":"on","is_active":"on","_save":"Save"})
+        panel_password=get_random_string(32)
+        response=self.client.post(reverse("admin:portal_user_add"),{"username":"panel-user","full_name":"کاربر پنل","email":"panel@example.com","organizational_unit":"طرح سلامت","job_title":"مدیر پروژه","role":"USER","password1":panel_password,"password2":panel_password,"must_change_password":"on","is_active":"on","_save":"Save"})
         self.assertEqual(response.status_code,302); self.assertTrue(User.objects.filter(username="panel-user",must_change_password=True).exists())
         service=Service.objects.create(code="AUD-01",name="خدمت ممیزی",category=Category.objects.first(),domain="توسعه بازار",full_description="تعریف",initial_response_days=2,delivery_min_days=3,delivery_max_days=5)
         url=reverse("admin:portal_service_change",args=[service.pk]); get_response=self.client.get(url); self.assertEqual(get_response.status_code,200)
@@ -138,7 +142,7 @@ class PortalTests(TestCase):
         calendar_response=self.client.get(reverse("admin:portal_nonworkingdate_add")); self.assertContains(calendar_response,"date-trigger"); self.assertContains(calendar_response,"jalali.js")
 
     def test_admin_can_edit_role_and_deactivate_user(self):
-        target=User.objects.create_user(username="managed-user",password="Strong-pass-123",full_name="کاربر قابل مدیریت",email="managed@example.com",role=User.Role.USER,must_change_password=False)
+        target=User.objects.create_user(username="managed-user",password=TEST_PASSWORD,full_name="کاربر قابل مدیریت",email="managed@example.com",role=User.Role.USER,must_change_password=False)
         self.client.force_login(self.admin)
         response=self.client.post(reverse("admin:portal_user_change",args=[target.pk]),{
             "username":target.username,"full_name":target.full_name,"email":target.email,"mobile":"","organizational_unit":"طرح سلامت","job_title":"مدیر پروژه",
@@ -174,27 +178,27 @@ class EndToEndFlowTests(TestCase):
     @classmethod
     def setUpTestData(cls):
         call_command("seed_catalog",verbosity=0); cls.service=Service.objects.first(); cls.service.default_owner=None; cls.service.save()
-        cls.user=User.objects.create_user(username="flow-user",password="Strong-pass-123",full_name="درخواست‌دهنده",organizational_unit="طرح کشاورزی",role=User.Role.USER,must_change_password=False)
-        cls.manager=User.objects.create_user(username="flow-manager",password="Strong-pass-123",full_name="رسیدگی‌کننده",role=User.Role.REQUEST_MANAGER,must_change_password=False)
+        cls.user=User.objects.create_user(username="flow-user",password=TEST_PASSWORD,full_name="درخواست‌دهنده",organizational_unit="طرح کشاورزی",role=User.Role.USER,must_change_password=False)
+        cls.manager=User.objects.create_user(username="flow-manager",password=TEST_PASSWORD,full_name="رسیدگی‌کننده",role=User.Role.REQUEST_MANAGER,must_change_password=False)
     def payload(self):
         data={"project":"پروژه جریان کامل","title":"درخواست جریان کامل","priority":"HIGH","desired_delivery_date":str(timezone.localdate()+timedelta(days=30))}
         for f in self.service.form_fields.filter(active=True,required=True): data[f"data_{f.key}"]="اطلاعات آزمون"
         return data
     def test_complete_user_and_manager_flow(self):
-        self.assertTrue(self.client.login(username="flow-user",password="Strong-pass-123"))
+        self.assertTrue(self.client.login(username="flow-user",password=TEST_PASSWORD))
         self.assertEqual(self.client.get(reverse("catalog")+"?q="+self.service.code).status_code,200)
         response=self.client.post(reverse("request_create",args=[self.service.pk]),self.payload()|{"action":"draft"}); self.assertEqual(response.status_code,302)
-        item=Request.objects.get(title="درخواست جریان کامل"); self.client.logout(); self.client.login(username="flow-user",password="Strong-pass-123")
+        item=Request.objects.get(title="درخواست جریان کامل"); self.client.logout(); self.client.login(username="flow-user",password=TEST_PASSWORD)
         self.assertContains(self.client.get(reverse("request_detail",args=[item.pk])),"درخواست جریان کامل")
         self.client.post(reverse("submit_request",args=[item.pk])); item.refresh_from_db(); self.assertEqual(item.status,Request.Status.SUBMITTED)
-        self.client.logout(); self.client.login(username="flow-manager",password="Strong-pass-123")
+        self.client.logout(); self.client.login(username="flow-manager",password=TEST_PASSWORD)
         self.client.post(reverse("control_action",args=[item.pk]),{"kind":"action","owner":self.manager.pk,"status":"UNDER_REVIEW"})
         self.client.post(reverse("control_action",args=[item.pk]),{"kind":"message","body":"مدرک زمان‌بندی را ارسال کنید.","request_info":"1"}); item.refresh_from_db(); self.assertTrue(item.needs_user_action)
         self.assertTrue(Notification.objects.filter(user=self.user,request=item,read_at__isnull=True).exists())
-        self.client.logout(); self.client.login(username="flow-user",password="Strong-pass-123")
+        self.client.logout(); self.client.login(username="flow-user",password=TEST_PASSWORD)
         upload=SimpleUploadedFile("plan.pdf",b"test-pdf",content_type="application/pdf")
         self.client.post(reverse("add_message",args=[item.pk]),{"body":"مدرک پیوست شد.","file":upload}); item.refresh_from_db(); self.assertEqual(item.status,Request.Status.UNDER_REVIEW); self.assertFalse(item.needs_user_action); self.assertEqual(item.attachments.count(),1)
-        self.client.logout(); self.client.login(username="flow-manager",password="Strong-pass-123")
+        self.client.logout(); self.client.login(username="flow-manager",password=TEST_PASSWORD)
         self.client.post(reverse("control_action",args=[item.pk]),{"kind":"action","owner":self.manager.pk,"status":"IN_PROGRESS"})
         self.client.post(reverse("control_action",args=[item.pk]),{"kind":"action","owner":self.manager.pk,"status":"COMPLETED"}); item.refresh_from_db(); self.assertEqual(item.status,Request.Status.COMPLETED); self.assertIsNotNone(item.completed_at); self.assertGreater(item.history.count(),5); self.assertTrue(ActivityLog.objects.filter(target_id=str(item.pk),action="STATUS_CHANGED").exists())
 

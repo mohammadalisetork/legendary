@@ -539,13 +539,21 @@ def manage_department_detail(request,pk):
 
 
 @login_required
+def manage_department_preview(request,pk):
+    department=_managed_department(request.user,pk)
+    if not can(request.user,Action.CATALOGUE_MANAGE,department=department):raise PermissionDenied
+    families=department.service_families.filter(active=True,lifecycle_status=Category.Status.ACTIVE).prefetch_related(Prefetch("services",queryset=Service.objects.filter(active=True,lifecycle_status=Service.Status.ACTIVE).select_related("category")))
+    return render(request,"portal/department_landing.html",{"department":department,"families":families,"q":"","preview":True,"breadcrumbs":[{"label":"مدیریت اداره","href":reverse("manage_department_detail",args=[department.pk])},{"label":"پیش‌نمایش انتشار"}]})
+
+
+@login_required
 def manage_department_edit(request,pk=None):
     if pk:
         department=_managed_department(request.user,pk)
     else:
         if not is_super_admin(request.user): raise PermissionDenied
         department=Department()
-    form=DepartmentForm(request.POST or None,instance=department)
+    form=DepartmentForm(request.POST or None,request.FILES or None,instance=department)
     if request.method=="POST" and form.is_valid():
         created=not department.pk; obj=form.save(); audit(request.user,"DEPARTMENT_CREATED" if created else "DEPARTMENT_UPDATED",obj,{"fields":list(form.changed_data)}); messages.success(request,"اطلاعات اداره ذخیره شد."); return redirect("manage_department_detail",pk=obj.pk)
     return render(request,"control/object_form.html",{"form":form,"title":"ایجاد اداره" if not pk else "ویرایش اداره","department":department if pk else None})
@@ -587,9 +595,10 @@ def manage_family_edit(request,department_pk=None,pk=None):
     family=get_object_or_404(Category,pk=pk) if pk else None
     department=_managed_department(request.user,family.department_id if family else department_pk)
     if not can(request.user,Action.CATALOGUE_MANAGE,department=department): raise PermissionDenied
+    old_values={name:getattr(family,name) for name in ("name","slug","description","display_order","lifecycle_status")} if family else {}
     form=ServiceFamilyForm(request.POST or None,instance=family)
     if request.method=="POST" and form.is_valid():
-        obj=form.save(False); obj.department=department; obj.save(); audit(request.user,"SERVICE_FAMILY_CREATED" if not family else "SERVICE_FAMILY_UPDATED",obj,{"department":department.pk,"fields":list(form.changed_data)}); messages.success(request,"خانواده خدمت ذخیره شد."); return redirect("manage_department_detail",pk=department.pk)
+        obj=form.save(False); obj.department=department; obj.save(); audit(request.user,"SERVICE_FAMILY_CREATED" if not family else "SERVICE_FAMILY_UPDATED",obj,{"department":department.pk,"fields":list(form.changed_data),"old":old_values,"new":{name:getattr(obj,name) for name in form.changed_data}}); messages.success(request,"خانواده خدمت ذخیره شد."); return redirect("manage_department_detail",pk=department.pk)
     return render(request,"control/object_form.html",{"form":form,"title":"ایجاد خانواده خدمت" if not family else "ویرایش خانواده خدمت","department":department})
 
 
@@ -598,7 +607,8 @@ def manage_service_edit(request,department_pk=None,pk=None):
     service=get_object_or_404(Service.objects.select_related("category__department"),pk=pk) if pk else None
     department=_managed_department(request.user,service.department.pk if service else department_pk)
     if not can(request.user,Action.CATALOGUE_MANAGE,department=department): raise PermissionDenied
-    form=ServiceManagementForm(request.POST or None,instance=service,department=department)
+    old_values={name:getattr(service,name) for name in ("code","name","domain","initial_response_days","review_target_days","delivery_min_days","delivery_max_days","default_owner_id","lifecycle_status")} if service else {}
+    form=ServiceManagementForm(request.POST or None,request.FILES or None,instance=service,department=department)
     if request.method=="POST" and form.is_valid():
-        obj=form.save(); audit(request.user,"SERVICE_CREATED" if not service else "SERVICE_UPDATED",obj,{"department":department.pk,"fields":list(form.changed_data)}); messages.success(request,"خدمت ذخیره شد."); return redirect("manage_department_detail",pk=department.pk)
+        obj=form.save(); audit(request.user,"SERVICE_CREATED" if not service else "SERVICE_UPDATED",obj,{"department":department.pk,"fields":list(form.changed_data),"old":old_values,"new":{name:getattr(obj,name) for name in form.changed_data}}); messages.success(request,"خدمت ذخیره شد."); return redirect("manage_department_detail",pk=department.pk)
     return render(request,"control/object_form.html",{"form":form,"title":"ایجاد خدمت" if not service else "ویرایش خدمت","department":department})

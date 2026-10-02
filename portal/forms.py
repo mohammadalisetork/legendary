@@ -120,10 +120,11 @@ class RequestBaseForm(forms.ModelForm):
             if f.field_type==ServiceFormField.FieldType.TEXTAREA: field=forms.CharField(widget=forms.Textarea(attrs=attrs),required=required)
             elif f.field_type==ServiceFormField.FieldType.NUMBER: field=forms.DecimalField(widget=forms.NumberInput(attrs=attrs),required=required)
             elif f.field_type==ServiceFormField.FieldType.DATE: field=forms.DateField(widget=forms.HiddenInput(attrs={"class":"jalali-iso dynamic-date"}),required=required)
-            elif f.field_type==ServiceFormField.FieldType.SELECT: field=forms.ChoiceField(choices=[("","انتخاب کنید")]+[(x,x) for x in f.options],required=required)
+            elif f.field_type in {ServiceFormField.FieldType.SELECT,ServiceFormField.FieldType.RADIO}: field=forms.ChoiceField(choices=[("","انتخاب کنید")]+[(x,x) for x in f.options],widget=forms.RadioSelect if f.field_type==ServiceFormField.FieldType.RADIO else forms.Select,required=required)
             elif f.field_type==ServiceFormField.FieldType.MULTISELECT: field=forms.MultipleChoiceField(choices=[(x,x) for x in f.options],widget=forms.CheckboxSelectMultiple,required=required)
             elif f.field_type==ServiceFormField.FieldType.CHECKBOX: field=forms.BooleanField(required=required)
             elif f.field_type==ServiceFormField.FieldType.EMAIL: field=forms.EmailField(widget=forms.EmailInput(attrs=attrs),required=required)
+            elif f.field_type==ServiceFormField.FieldType.PHONE: field=forms.RegexField(regex=r"^[+\d۰-۹٠-٩()\-\s]{7,30}$",widget=forms.TextInput(attrs={**attrs,"type":"tel","autocomplete":"tel"}),required=required)
             elif f.field_type==ServiceFormField.FieldType.FILE: field=forms.FileField(required=required)
             else: field=forms.CharField(widget=forms.TextInput(attrs=attrs),required=required)
             field.label=f.label; field.help_text=f.help_text; self.fields[f"data_{f.key}"]=field
@@ -239,14 +240,25 @@ def save_upload(req,user,file,response=None):
 class DepartmentForm(forms.ModelForm):
     class Meta:
         model=Department
-        fields=["code","name","short_name","description","intro_text","display_order"]
-        labels={"code":"کد پایدار","name":"نام اداره","short_name":"نام کوتاه","description":"توضیح کوتاه","intro_text":"متن معرفی","display_order":"ترتیب نمایش"}
+        fields=["code","name","short_name","description","intro_text","icon_name","cover_image","display_order"]
+        labels={"code":"کد پایدار","name":"نام اداره","short_name":"نام کوتاه","description":"توضیح کوتاه","intro_text":"متن معرفی","icon_name":"نام آیکون","cover_image":"تصویر یا GIF معرفی","display_order":"ترتیب نمایش"}
         widgets={"description":forms.Textarea(attrs={"rows":3}),"intro_text":forms.Textarea(attrs={"rows":4})}
 
     def __init__(self,*args,**kwargs):
         super().__init__(*args,**kwargs)
         if self.instance.pk:
             self.fields["code"].disabled=True
+
+    def clean_cover_image(self):
+        image=self.cleaned_data.get("cover_image")
+        if not image or not hasattr(image,"size"):return image
+        if image.size>3*1024*1024:raise forms.ValidationError("حجم تصویر نباید بیشتر از ۳ مگابایت باشد.")
+        extension=Path(image.name).suffix.lower()
+        if extension not in {".png",".jpg",".jpeg",".webp",".gif"}:raise forms.ValidationError("فقط PNG، JPEG، WebP یا GIF مجاز است.")
+        head=image.read(16);image.seek(0)
+        valid=(extension==".png" and head.startswith(b"\x89PNG\r\n\x1a\n")) or (extension in {".jpg",".jpeg"} and head.startswith(b"\xff\xd8\xff")) or (extension==".gif" and head.startswith((b"GIF87a",b"GIF89a"))) or (extension==".webp" and head[:4]==b"RIFF" and head[8:12]==b"WEBP")
+        if not valid:raise forms.ValidationError("محتوای فایل با نوع تصویر مجاز هم‌خوانی ندارد.")
+        return image
 
 
 class DepartmentLifecycleForm(forms.Form):
@@ -257,8 +269,9 @@ class DepartmentLifecycleForm(forms.Form):
         super().__init__(*args,**kwargs)
         allowed={
             Department.Status.DRAFT:{Department.Status.PUBLISHED},
-            Department.Status.PUBLISHED:{Department.Status.DISABLED,Department.Status.ARCHIVED},
-            Department.Status.DISABLED:{Department.Status.PUBLISHED,Department.Status.ARCHIVED},
+            Department.Status.PUBLISHED:{Department.Status.DISABLED,Department.Status.TEMPORARILY_DISABLED,Department.Status.ARCHIVED},
+            Department.Status.DISABLED:{Department.Status.PUBLISHED,Department.Status.TEMPORARILY_DISABLED,Department.Status.ARCHIVED},
+            Department.Status.TEMPORARILY_DISABLED:{Department.Status.PUBLISHED,Department.Status.DISABLED,Department.Status.ARCHIVED},
             Department.Status.ARCHIVED:set(),
         }.get(department.status,set())
         if not is_super_admin(actor): allowed.discard(Department.Status.ARCHIVED)
@@ -267,7 +280,7 @@ class DepartmentLifecycleForm(forms.Form):
 
     def clean_status(self):
         status=self.cleaned_data["status"]
-        if status==Department.Status.PUBLISHED and not self.department.service_families.filter(active=True,services__active=True).exists():
+        if status==Department.Status.PUBLISHED and not self.department.service_families.filter(active=True,lifecycle_status=Category.Status.ACTIVE,services__active=True,services__lifecycle_status=Service.Status.ACTIVE).exists():
             raise forms.ValidationError("برای انتشار، حداقل یک خانواده و خدمت فعال لازم است.")
         return status
 
@@ -288,22 +301,36 @@ class DepartmentMembershipForm(forms.Form):
 class ServiceFamilyForm(forms.ModelForm):
     class Meta:
         model=Category
-        fields=["name","slug","description","display_order","active"]
-        labels={"name":"نام خانواده خدمت","slug":"شناسه نشانی","description":"توضیح","display_order":"ترتیب نمایش","active":"فعال"}
+        fields=["name","slug","description","display_order","lifecycle_status"]
+        labels={"name":"نام خانواده خدمت","slug":"شناسه نشانی","description":"توضیح","display_order":"ترتیب نمایش","lifecycle_status":"وضعیت"}
         widgets={"description":forms.Textarea(attrs={"rows":3})}
+    def __init__(self,*args,**kwargs):
+        super().__init__(*args,**kwargs);self.fields["lifecycle_status"].required=False
+    def save(self,commit=True):
+        obj=super().save(commit=False);obj.active=obj.lifecycle_status==Category.Status.ACTIVE
+        if commit:obj.save()
+        return obj
+    def clean_lifecycle_status(self):
+        value=self.cleaned_data.get("lifecycle_status") or (self.instance.lifecycle_status if self.instance.pk else Category.Status.ACTIVE)
+        if not self.instance.pk and value==Category.Status.ARCHIVED:raise forms.ValidationError("خانوادهٔ جدید را نمی‌توان مستقیماً بایگانی کرد.")
+        old=self.instance.lifecycle_status if self.instance.pk else Category.Status.ACTIVE
+        allowed={Category.Status.ACTIVE:{Category.Status.DISABLED,Category.Status.ARCHIVED},Category.Status.DISABLED:{Category.Status.ACTIVE,Category.Status.ARCHIVED},Category.Status.ARCHIVED:set()}
+        if value!=old and value not in allowed[old]:raise forms.ValidationError("تغییر وضعیت با چرخهٔ عمر خانواده سازگار نیست.")
+        return value
 
 
 class ServiceManagementForm(forms.ModelForm):
     class Meta:
         model=Service
-        fields=["code","name","category","domain","short_description","full_description","purpose","scope","deliverables","required_inputs","default_owner","initial_response_days","delivery_min_days","delivery_max_days","supports_desired_date","active","display_order"]
-        labels={"category":"خانواده خدمت","active":"فعال","display_order":"ترتیب نمایش"}
-        widgets={name:forms.Textarea(attrs={"rows":3}) for name in ["short_description","full_description","purpose","scope","deliverables","required_inputs"]}
+        fields=["code","name","category","domain","short_description","full_description","purpose","scope","deliverables","required_inputs","request_requirements","process_information","excluded","service_role","acceptance_criteria","legacy_sla","default_owner","initial_response_days","review_target_days","delivery_min_days","delivery_max_days","maximum_duration_days","supports_desired_date","lifecycle_status","display_order"]
+        labels={"category":"خانواده خدمت","lifecycle_status":"وضعیت","display_order":"ترتیب نمایش","initial_response_days":"زمان پاسخ اولیه (روز کاری)","review_target_days":"هدف بازبینی (روز کاری)","delivery_min_days":"حداقل زمان انجام (روز کاری)","delivery_max_days":"حداکثر زمان انجام (روز کاری)","maximum_duration_days":"حد نهایی مدت (روز کاری)","default_owner":"مسئول پیش‌فرض"}
+        widgets={name:forms.Textarea(attrs={"rows":3}) for name in ["short_description","full_description","purpose","scope","deliverables","required_inputs","request_requirements","process_information","excluded","acceptance_criteria","legacy_sla"]}
 
     def __init__(self,*args,department=None,**kwargs):
         from .policies import eligible_owners
         super().__init__(*args,**kwargs)
         self.department=department
+        self.fields["lifecycle_status"].required=False
         self.fields["category"].queryset=department.service_families.all()
         self.fields["default_owner"].queryset=eligible_owners(department)
 
@@ -312,6 +339,40 @@ class ServiceManagementForm(forms.ModelForm):
         if category.department_id!=self.department.pk:
             raise forms.ValidationError("خانواده خدمت باید متعلق به همین اداره باشد.")
         return category
+
+    def clean_lifecycle_status(self):
+        value=self.cleaned_data.get("lifecycle_status") or (self.instance.lifecycle_status if self.instance.pk else Service.Status.ACTIVE)
+        if not self.instance.pk and value==Service.Status.ARCHIVED:raise forms.ValidationError("خدمت جدید را نمی‌توان مستقیماً بایگانی کرد.")
+        old=self.instance.lifecycle_status if self.instance.pk else Service.Status.ACTIVE
+        allowed={Service.Status.ACTIVE:{Service.Status.DISABLED,Service.Status.ARCHIVED},Service.Status.DISABLED:{Service.Status.ACTIVE,Service.Status.ARCHIVED},Service.Status.ARCHIVED:set()}
+        if value!=old and value not in allowed[old]:raise forms.ValidationError("تغییر وضعیت با چرخهٔ عمر خدمت سازگار نیست.")
+        return value
+
+    def save(self,commit=True):
+        obj=super().save(commit=False);obj.active=obj.lifecycle_status==Service.Status.ACTIVE
+        if commit:obj.save()
+        return obj
+
+
+class ServiceFormFieldForm(forms.ModelForm):
+    class Meta:
+        model=ServiceFormField
+        fields=["key","label","field_type","required","placeholder","help_text","options","display_order","active"]
+        labels={"key":"کلید یکتا","label":"عنوان نمایشی","field_type":"نوع ورودی","required":"الزامی","placeholder":"متن راهنما","help_text":"توضیح زیر فیلد","options":"گزینه‌ها (JSON array برای انتخابی‌ها)","display_order":"ترتیب","active":"فعال"}
+        widgets={"options":forms.Textarea(attrs={"rows":3}),"help_text":forms.Textarea(attrs={"rows":2})}
+    def __init__(self,*args,service=None,**kwargs):
+        super().__init__(*args,**kwargs);self.service=service
+        self.fields["options"].help_text='برای select و multiselect: ["گزینه یک", "گزینه دو"]'
+    def clean(self):
+        cleaned=super().clean(); kind=cleaned.get("field_type"); options=cleaned.get("options") or []
+        if kind in {ServiceFormField.FieldType.SELECT,ServiceFormField.FieldType.RADIO,ServiceFormField.FieldType.MULTISELECT} and not options:self.add_error("options","برای فیلد انتخابی دست‌کم یک گزینه لازم است.")
+        if kind not in {ServiceFormField.FieldType.SELECT,ServiceFormField.FieldType.RADIO,ServiceFormField.FieldType.MULTISELECT} and options:self.add_error("options","فقط فیلدهای انتخابی گزینه دارند.")
+        if len(options)>100:self.add_error("options","حداکثر ۱۰۰ گزینه مجاز است.")
+        return cleaned
+    def save(self,commit=True):
+        obj=super().save(commit=False);obj.service=self.service
+        if commit:obj.save()
+        return obj
 
 class PriorityPolicyForm(forms.ModelForm):
     class Meta:

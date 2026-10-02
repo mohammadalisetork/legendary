@@ -41,7 +41,7 @@ curl http://127.0.0.1:8000/health
 ساخت دستی کنترل‌شده:
 
 ```bash
-docker compose exec -e INITIAL_ADMIN_USERNAME=admin -e INITIAL_ADMIN_PASSWORD='temporary-password' web python manage.py create_initial_admin
+docker compose exec web python manage.py create_initial_admin
 ```
 
 ## عملیات پایگاه داده
