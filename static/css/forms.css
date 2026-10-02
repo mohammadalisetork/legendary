@@ -12,6 +12,8 @@ input[aria-invalid="true"], select[aria-invalid="true"], textarea[aria-invalid="
 .filter-date { display: grid; gap: 5px; }
 .filter-actions { display: flex; gap: 8px; align-items: center; }
 .form-actions { gap: 8px; align-items: center; }
+[hidden] { display: none !important; }
+.approval-reason { resize: none; min-height: 110px; }
 .request-form { max-width: 940px; }
 .form-section-title { grid-column: 1 / -1; margin: 4px 0 0; padding-bottom: 6px; border-bottom: 1px solid var(--border); font-size: 1.05rem; }
 .upload-zone { display: block; padding: 15px; border: 1px dashed var(--border-strong); border-radius: var(--radius-md); background: var(--surface-subtle); }

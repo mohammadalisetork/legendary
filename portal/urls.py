@@ -1,7 +1,25 @@
 from django.contrib.auth import views as auth_views
 from django.urls import path
-from . import views
+from . import views, governance_views
 urlpatterns=[
+ path('capacity/balance/',governance_views.capacity_balance,name='capacity_balance'),
+ path('capacity/',governance_views.capacity_dashboard,name='capacity_dashboard'),
+ path('capacity/priorities/<int:pk>/',governance_views.manage_priority_policy,name='manage_priority_policy'),
+ path('capacity/periods/new/',governance_views.manage_allocation_period,name='manage_allocation_period_create'),
+ path('capacity/periods/<int:pk>/',governance_views.manage_allocation_period,name='manage_allocation_period_edit'),
+ path('capacity/allocations/new/',governance_views.manage_credit_allocation,name='manage_credit_allocation_create'),
+ path('capacity/allocations/<int:pk>/',governance_views.manage_credit_allocation,name='manage_credit_allocation_edit'),
+ path('capacity/policies/new/',governance_views.manage_approval_policy,name='manage_approval_policy_create'),
+ path('capacity/policies/<int:pk>/',governance_views.manage_approval_policy,name='manage_approval_policy_edit'),
+ path('capacity/senior/',governance_views.manage_senior_authority,name='manage_senior_authority'),
+ path('capacity/senior/assign/',governance_views.assign_senior_authority,name='assign_senior_authority'),
+ path('approvals/',governance_views.approval_inbox,name='approval_inbox'),
+ path('approvals/<int:pk>/',governance_views.approval_detail,name='approval_detail'),
+ path('approvals/<int:pk>/clarify/',governance_views.approval_clarify,name='approval_clarify'),
+ path('approvals/steps/<int:pk>/decide/',governance_views.approval_decide,name='approval_decide'),
+ path('approvals/attachments/<int:pk>/',governance_views.approval_attachment_download,name='approval_attachment_download'),
+ path('control/requests/<int:pk>/approval/',governance_views.provider_approval,name='provider_approval'),
+ path('requests/<int:pk>/cancel-approval/',governance_views.cancel_priority_approval,name='cancel_priority_approval'),
  path("appearance/",views.appearance_settings,name="appearance_settings"),path("appearance/logo/",views.brand_logo,name="brand_logo"),
  path("login/",views.PortalLoginView.as_view(),name="login"),path("logout/",auth_views.LogoutView.as_view(),name="logout"),
  path("password/",views.password_change,name="password_change"),

@@ -201,4 +201,49 @@ class ProgramProjectGovernanceTests(TestCase):
             scope_type=RoleAssignment.ScopeType.PROGRAM, program=self.program2, assigned_by=self.admin)
         form = RequestBaseForm(service=self.service, user=self.pjm)
         self.assertEqual(set(form.fields["requester_role_context"].choices and [x[0] for x in form.fields["requester_role_context"].choices]),
-            {Rol
+            {RoleAssignment.Role.PROGRAM_MANAGER, RoleAssignment.Role.PROJECT_MANAGER})
+        self.client.force_login(self.pjm)
+        response = self.client.get(reverse("demand_project_options"), {"role":RoleAssignment.Role.PROJECT_MANAGER})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual({x["id"] for x in response.json()["projects"]}, {self.project.pk})
+        response = self.client.get(reverse("demand_project_options"), {"role":RoleAssignment.Role.PROGRAM_MANAGER, "program":self.program2.pk})
+        self.assertEqual({x["id"] for x in response.json()["projects"]}, {self.project2.pk})
+        response = self.client.get(reverse("demand_project_options"), {"role":RoleAssignment.Role.PROGRAM_MANAGER, "program":self.program.pk})
+        self.assertEqual(response.status_code, 404)
+
+    def test_project_manager_submission_derives_program(self):
+        req = self.make_request(requester=self.pjm, program=self.program, project=self.project, status=Request.Status.DRAFT)
+        req.requester_role_context = RoleAssignment.Role.PROJECT_MANAGER
+        req.save()
+        self.client.force_login(self.pjm)
+        self.client.post(reverse("submit_request", args=[req.pk]))
+        req.refresh_from_db()
+        self.assertEqual(req.status, Request.Status.SUBMITTED)
+        self.assertEqual(req.program_id, self.program.pk)
+        self.assertEqual(req.requester_role_at_submission, RoleAssignment.Role.PROJECT_MANAGER)
+
+    def test_admin_creation_rejects_direct_active_status_without_server_error(self):
+        from .forms import ProgramForm, ProjectForm
+        self.assertFalse(ProgramForm({"code":"instant-active","name":"فعال فوری","status":"ACTIVE"}).is_valid())
+        self.assertFalse(ProjectForm({"code":"instant-project","name":"پروژه فوری","program":self.program.pk,"status":"ACTIVE"}).is_valid())
+
+    def test_assignment_audit_and_provider_queue_context(self):
+        from .models import ActivityLog
+        req = self.make_request(program=self.program, project=self.project)
+        self.assign_provider_department(self.provider)
+        self.client.force_login(self.admin)
+        self.client.post(reverse("manage_project_assignment", args=[self.project.pk]), {"user":self.other.pk})
+        self.assertTrue(ActivityLog.objects.filter(action="PROJECT_MANAGER_ASSIGNED", target_id__isnull=False).exists())
+        self.client.force_login(self.provider)
+        response = self.client.get(reverse("control_request_detail", args=[req.pk]))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Health Plan")
+        self.assertContains(response, "Health Project")
+
+    def test_program_dashboard_aggregates_cross_department_requests(self):
+        req = self.make_request(program=self.program, project=self.project)
+        self.client.force_login(self.pm)
+        response = self.client.get(reverse("program_dashboard"))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, req.public_id)
+        self.assertContains(response, "Health Project")

@@ -5,7 +5,7 @@ from django.conf import settings
 from django.contrib.auth.models import AbstractUser
 from django.core.exceptions import ValidationError
 from django.core.validators import MinValueValidator
-from django.db import models
+from django.db import models, transaction
 from django.db.utils import OperationalError, ProgrammingError
 from django.utils import timezone
 
@@ -131,6 +131,7 @@ class RoleAssignment(Timestamped):
         SUPER_ADMIN="SUPER_ADMIN","مدیر ارشد سامانه"
         PROGRAM_MANAGER="PROGRAM_MANAGER","مدیر طرح"
         PROJECT_MANAGER="PROJECT_MANAGER","مدیر پروژه"
+        SENIOR_APPROVAL_AUTHORITY="SENIOR_APPROVAL_AUTHORITY","مرجع تأیید ارشد"
     class ScopeType(models.TextChoices):
         GLOBAL="GLOBAL","سراسری"
         DEPARTMENT="DEPARTMENT","اداره"
@@ -149,7 +150,7 @@ class RoleAssignment(Timestamped):
         ordering=["user__username","role"]
         constraints=[
             models.CheckConstraint(condition=(models.Q(scope_type="GLOBAL",department__isnull=True,program__isnull=True,project__isnull=True)|models.Q(scope_type="DEPARTMENT",department__isnull=False,program__isnull=True,project__isnull=True)|models.Q(scope_type="PROGRAM",department__isnull=True,program__isnull=False,project__isnull=True)|models.Q(scope_type="PROJECT",department__isnull=True,program__isnull=False,project__isnull=False)),name="role_assignment_scope_target"),
-            models.CheckConstraint(condition=(models.Q(scope_type="GLOBAL",role__in=["REQUESTER","SUPERVISOR","EXECUTIVE_VIEWER","SUPER_ADMIN"])|models.Q(scope_type="DEPARTMENT",role__in=["REQUEST_MANAGER","DEPARTMENT_LEAD"])|models.Q(scope_type="PROGRAM",role="PROGRAM_MANAGER")|models.Q(scope_type="PROJECT",role="PROJECT_MANAGER")),name="role_assignment_role_scope"),
+            models.CheckConstraint(condition=(models.Q(scope_type="GLOBAL",role__in=["REQUESTER","SUPERVISOR","EXECUTIVE_VIEWER","SUPER_ADMIN","SENIOR_APPROVAL_AUTHORITY"])|models.Q(scope_type="DEPARTMENT",role__in=["REQUEST_MANAGER","DEPARTMENT_LEAD"])|models.Q(scope_type="PROGRAM",role="PROGRAM_MANAGER")|models.Q(scope_type="PROJECT",role="PROJECT_MANAGER")),name="role_assignment_role_scope"),
             models.UniqueConstraint(fields=["user","role","scope_type"],condition=models.Q(scope_type="GLOBAL"),name="unique_global_role_assignment"),
             models.UniqueConstraint(fields=["user","role","department"],condition=models.Q(scope_type="DEPARTMENT"),name="unique_department_role_assignment"),
             models.UniqueConstraint(fields=["user","role","program"],condition=models.Q(scope_type="PROGRAM"),name="unique_program_role_assignment"),
@@ -256,7 +257,7 @@ class NonWorkingDate(Timestamped):
 
 class Request(Timestamped):
     class Status(models.TextChoices): DRAFT="DRAFT","پیش‌نویس"; SUBMITTED="SUBMITTED","ثبت‌شده"; UNDER_REVIEW="UNDER_REVIEW","در حال بررسی"; NEED_INFO="NEED_INFO","نیازمند اطلاعات تکمیلی"; ACCEPTED="ACCEPTED","پذیرفته‌شده"; IN_PROGRESS="IN_PROGRESS","در حال انجام"; ON_HOLD="ON_HOLD","متوقف‌شده"; COMPLETED="COMPLETED","تکمیل‌شده"; REJECTED="REJECTED","ردشده"; CANCELLED="CANCELLED","لغوشده"
-    class Priority(models.TextChoices): LOW="LOW","کم"; NORMAL="NORMAL","عادی"; HIGH="HIGH","زیاد"; URGENT="URGENT","فوری"
+    class Priority(models.TextChoices): LOW="LOW","کم"; NORMAL="NORMAL","عادی"; HIGH="HIGH","زیاد"; URGENT="URGENT","فوری"; VERY_URGENT="VERY_URGENT","خیلی فوری"; EMERGENCY="EMERGENCY","اضطراری"
     TRANSITIONS={
         Status.SUBMITTED:{Status.UNDER_REVIEW,Status.NEED_INFO,Status.ACCEPTED,Status.ON_HOLD,Status.REJECTED,Status.CANCELLED},
         Status.UNDER_REVIEW:{Status.NEED_INFO,Status.ACCEPTED,Status.IN_PROGRESS,Status.ON_HOLD,Status.REJECTED,Status.CANCELLED},
@@ -277,7 +278,8 @@ class Request(Timestamped):
     project_code_snapshot=models.CharField(max_length=64,blank=True,default="")
     requesting_unit=models.CharField(max_length=160); service=models.ForeignKey(Service,on_delete=models.PROTECT,related_name="requests"); project=models.CharField(max_length=200)
     title=models.CharField(max_length=250); request_data=models.JSONField(default=dict); desired_delivery_date=models.DateField(null=True,blank=True)
-    priority=models.CharField(max_length=12,choices=Priority.choices,default=Priority.NORMAL); status=models.CharField(max_length=20,choices=Status.choices,default=Status.DRAFT,db_index=True)
+    priority=models.CharField(max_length=16,choices=Priority.choices,default=Priority.NORMAL); status=models.CharField(max_length=20,choices=Status.choices,default=Status.DRAFT,db_index=True)
+    provider_hold=models.BooleanField(default=False,db_index=True)
     assigned_owner=models.ForeignKey(settings.AUTH_USER_MODEL,null=True,blank=True,on_delete=models.SET_NULL,related_name="assigned_requests")
     submitted_at=models.DateTimeField(null=True,blank=True); first_response_at=models.DateTimeField(null=True,blank=True); current_stage_started_at=models.DateTimeField(default=timezone.now); completed_at=models.DateTimeField(null=True,blank=True)
     expected_initial_response_at=models.DateTimeField(null=True,blank=True); estimated_delivery_min=models.DateField(null=True,blank=True); estimated_delivery_max=models.DateField(null=True,blank=True)
@@ -299,17 +301,48 @@ class Request(Timestamped):
     @property
     def is_overdue(self):
         if self.status in {self.Status.COMPLETED,self.Status.REJECTED,self.Status.CANCELLED,self.Status.DRAFT}: return False
-        if self.operational_paused_at: return False
-        if not self.first_response_at: return bool(self.expected_initial_response_at and timezone.now()>self.expected_initial_response_at)
-        return bool(self.estimated_delivery_max and timezone.localdate()>self.estimated_delivery_max)
+        if self.operational_paused_at or self.approval_steps.filter(status__in=["PENDING","CLARIFICATION_REQUESTED"],pauses_sla=True).exists(): return False
+        if not self.first_response_at: return bool(self.effective_initial_response_at and timezone.now()>self.effective_initial_response_at)
+        return bool(self.effective_delivery_max and timezone.localdate()>self.effective_delivery_max)
+    @property
+    def approval_paused_working_seconds(self):
+        cal=WorkingCalendar.objects.filter(active=True).first()
+        end=self.completed_at or timezone.now()
+        blocked=set(cal.non_working_dates.values_list('date',flat=True)) if cal else set()
+        total=0
+        for step in self.approval_steps.filter(pauses_sla=True,started_at__isnull=False):
+            start=step.started_at;finish=min(step.decided_at or end,end)
+            if finish<=start:continue
+            if not cal:total+=int((finish-start).total_seconds());continue
+            start=timezone.localtime(start);finish=timezone.localtime(finish);day=start.date()
+            while day<=finish.date():
+                if day.weekday() not in cal.weekend_days and day not in blocked:
+                    opening=timezone.make_aware(datetime.combine(day,cal.workday_start))
+                    closing=timezone.make_aware(datetime.combine(day,cal.workday_end))
+                    total+=max(0,int((min(finish,closing)-max(start,opening)).total_seconds()))
+                day+=timedelta(days=1)
+        return total
+    @property
+    def effective_initial_response_at(self):
+        if not self.expected_initial_response_at:return None
+        from .utils import advance_working_seconds
+        return advance_working_seconds(self.expected_initial_response_at,self.approval_paused_working_seconds)
+    @property
+    def effective_delivery_max(self):
+        if not self.estimated_delivery_max:return None
+        cal=WorkingCalendar.objects.filter(active=True).first()
+        if not cal:return self.estimated_delivery_max+timedelta(seconds=self.approval_paused_working_seconds)
+        from .utils import advance_working_seconds
+        baseline=timezone.make_aware(datetime.combine(self.estimated_delivery_max,cal.workday_end))
+        return timezone.localtime(advance_working_seconds(baseline,self.approval_paused_working_seconds,cal)).date()
     @property
     def operational_elapsed_seconds(self):
         if not self.submitted_at:return 0
         end=self.completed_at or timezone.now(); cal=WorkingCalendar.objects.filter(active=True).first()
-        if not cal:return max(0,int((end-self.submitted_at).total_seconds())-self.paused_seconds)
-        blocked=set(cal.non_working_dates.values_list("date",flat=True))
+        blocked=set(cal.non_working_dates.values_list("date",flat=True)) if cal else set()
         def working_seconds(start,finish):
             if not start or finish<=start:return 0
+            if not cal:return int((finish-start).total_seconds())
             start=timezone.localtime(start); finish=timezone.localtime(finish); current=start.date(); total=0
             while current<=finish.date():
                 if current.weekday() not in cal.weekend_days and current not in blocked:
@@ -317,12 +350,33 @@ class Request(Timestamped):
                     total+=max(0,int((min(finish,day_end)-max(start,day_start)).total_seconds()))
                 current+=timedelta(days=1)
             return total
-        total=working_seconds(self.submitted_at,end); pause_start=None; paused=0
+        total=working_seconds(self.submitted_at,end); pause_start=None; intervals=[]
         for event in self.history.filter(action__in=["CLOCK_PAUSED","CLOCK_RESUMED"]).order_by("created_at"):
             if event.action=="CLOCK_PAUSED" and pause_start is None: pause_start=event.created_at
-            elif event.action=="CLOCK_RESUMED" and pause_start is not None: paused+=working_seconds(pause_start,event.created_at); pause_start=None
-        if pause_start is not None: paused+=working_seconds(pause_start,end)
+            elif event.action=="CLOCK_RESUMED" and pause_start is not None: intervals.append((pause_start,event.created_at)); pause_start=None
+        if pause_start is not None: intervals.append((pause_start,end))
+        intervals.extend((step.started_at,step.decided_at or end) for step in self.approval_steps.filter(pauses_sla=True,started_at__isnull=False))
+        intervals=sorted((max(start,self.submitted_at),min(finish,end)) for start,finish in intervals if start and finish and finish>self.submitted_at)
+        merged=[]
+        for start,finish in intervals:
+            if merged and start<=merged[-1][1]:merged[-1]=(merged[-1][0],max(merged[-1][1],finish))
+            else:merged.append((start,finish))
+        paused=sum(working_seconds(start,finish) for start,finish in merged)
         return max(0,total-paused)
+    @property
+    def end_to_end_elapsed_seconds(self):
+        return max(0,int(((self.completed_at or timezone.now())-self.submitted_at).total_seconds())) if self.submitted_at else 0
+    def approval_wait_seconds(self,target=None):
+        end=self.completed_at or timezone.now()
+        steps=self.approval_steps.exclude(started_at=None)
+        if target:steps=steps.filter(target=target)
+        return sum(max(0,int((min(step.decided_at or end,end)-step.started_at).total_seconds())) for step in steps)
+    @property
+    def program_approval_wait_seconds(self):return self.approval_wait_seconds('PROGRAM_MANAGER')
+    @property
+    def senior_approval_wait_seconds(self):return self.approval_wait_seconds('SENIOR')
+    @property
+    def total_approval_wait_seconds(self):return self.approval_wait_seconds()
     @property
     def brief_items(self):
         labels={f.key:f.label for f in self.service.form_fields.all()}
@@ -334,6 +388,212 @@ class RequestResponse(Timestamped):
     request=models.ForeignKey(Request,on_delete=models.CASCADE,related_name="responses"); author=models.ForeignKey(settings.AUTH_USER_MODEL,on_delete=models.PROTECT); body=models.TextField(); requests_information=models.BooleanField(default=False)
     class Meta: ordering=["created_at"]
 
+class PriorityPolicy(Timestamped):
+    code=models.CharField(max_length=16,unique=True,choices=Request.Priority.choices)
+    name=models.CharField(max_length=100)
+    display_order=models.PositiveSmallIntegerField(default=0)
+    is_active=models.BooleanField(default=True)
+    requires_credit=models.BooleanField(default=False)
+    requires_approval=models.BooleanField(default=False)
+    semantic_tone=models.CharField(max_length=16,choices=[("neutral","عادی"),("warning","هشدار"),("critical","بحرانی")],default="neutral")
+    class Meta: ordering=["display_order","id"]
+    def __str__(self):return self.name
+
+class AllocationPeriod(Timestamped):
+    class Kind(models.TextChoices): MONTH="MONTH","ماهانه"; QUARTER="QUARTER","فصلی"; HALF_YEAR="HALF_YEAR","شش‌ماهه"; YEAR="YEAR","سالانه"; CUSTOM="CUSTOM","سفارشی"
+    name=models.CharField(max_length=120)
+    kind=models.CharField(max_length=12,choices=Kind.choices)
+    starts_on=models.DateField()
+    ends_on=models.DateField()
+    is_active=models.BooleanField(default=True)
+    class Meta: ordering=["-starts_on"]
+    def clean(self):
+        if self.starts_on and self.ends_on and self.ends_on<self.starts_on:raise ValidationError({"ends_on":"پایان دوره باید بعد از آغاز باشد."})
+        if self.pk and self.is_active and self.starts_on and self.ends_on:
+            for allocation in self.allocations.filter(is_active=True):
+                if CreditAllocation.objects.filter(program=allocation.program,department=allocation.department,priority=allocation.priority,
+                    is_active=True,period__is_active=True,period__starts_on__lte=self.ends_on,period__ends_on__gte=self.starts_on).exclude(period=self).exists():
+                    raise ValidationError("تغییر این دوره باعث هم‌پوشانی کیف اعتبار فعال می‌شود.")
+    def save(self,*args,**kwargs):
+        with transaction.atomic():
+            if self.pk:
+                list(Program.objects.select_for_update().filter(pk__in=self.allocations.values_list('program_id',flat=True).distinct()).order_by('pk'))
+            self.full_clean()
+            return super().save(*args,**kwargs)
+    def __str__(self):return self.name
+
+class CreditAllocation(Timestamped):
+    program=models.ForeignKey(Program,on_delete=models.PROTECT,related_name="credit_allocations")
+    department=models.ForeignKey(Department,on_delete=models.PROTECT,related_name="credit_allocations")
+    priority=models.ForeignKey(PriorityPolicy,on_delete=models.PROTECT,related_name="allocations")
+    period=models.ForeignKey(AllocationPeriod,on_delete=models.PROTECT,related_name="allocations")
+    quantity=models.PositiveIntegerField(default=0)
+    is_active=models.BooleanField(default=True)
+    created_by=models.ForeignKey(settings.AUTH_USER_MODEL,null=True,blank=True,on_delete=models.SET_NULL,related_name="created_allocations")
+    class Meta:
+        constraints=[models.UniqueConstraint(fields=["program","department","priority","period"],name="unique_credit_wallet")]
+        indexes=[models.Index(fields=["program","department","priority","is_active"],name="credit_wallet_lookup_idx")]
+    def clean(self):
+        if self.pk:
+            old=CreditAllocation.objects.filter(pk=self.pk).values('program_id','department_id','priority_id','period_id').first()
+            if old and any(old[key]!=getattr(self,key) for key in old) and self.reservations.exists():
+                raise ValidationError("ابعاد تخصیص دارای سابقهٔ اعتبار قابل تغییر نیست.")
+            committed=self.reservations.exclude(status="RELEASED").count()
+            if self.quantity<committed:raise ValidationError({"quantity":"سقف تخصیص کمتر از اعتبارات مصرف‌شده یا رزروشده است."})
+        if not self.is_active or not self.period_id:return
+        period=self.period
+        if not period.is_active:raise ValidationError({"period":"دورهٔ تخصیص باید فعال باشد."})
+        overlap=CreditAllocation.objects.filter(program_id=self.program_id,department_id=self.department_id,priority_id=self.priority_id,is_active=True,period__is_active=True,period__starts_on__lte=period.ends_on,period__ends_on__gte=period.starts_on).exclude(pk=self.pk)
+        if overlap.exists():raise ValidationError("دورهٔ فعال هم‌پوشان برای این طرح، اداره و اولویت وجود دارد.")
+    def save(self,*args,**kwargs):
+        with transaction.atomic():
+            if self.program_id:Program.objects.select_for_update().get(pk=self.program_id)
+            if self.pk:CreditAllocation.objects.select_for_update().get(pk=self.pk)
+            self.full_clean()
+            return super().save(*args,**kwargs)
+    def __str__(self):return f"{self.program} · {self.department} · {self.priority} · {self.period}"
+
+class CreditReservation(Timestamped):
+    class Status(models.TextChoices): RESERVED="RESERVED","رزروشده"; CONSUMED="CONSUMED","مصرف‌شده"; RELEASED="RELEASED","آزادشده"
+    request=models.OneToOneField(Request,on_delete=models.PROTECT,related_name="credit_reservation")
+    allocation=models.ForeignKey(CreditAllocation,on_delete=models.PROTECT,related_name="reservations")
+    status=models.CharField(max_length=10,choices=Status.choices,default=Status.RESERVED)
+    reserved_at=models.DateTimeField(default=timezone.now)
+    resolved_at=models.DateTimeField(null=True,blank=True)
+    def __str__(self):return f"{self.request.public_id} · {self.status}"
+
+class CreditLedgerEntry(models.Model):
+    class Event(models.TextChoices): RESERVE="RESERVE","رزرو"; CONSUME="CONSUME","مصرف"; RELEASE="RELEASE","آزادسازی"
+    reservation=models.ForeignKey(CreditReservation,on_delete=models.PROTECT,related_name="ledger_entries")
+    event=models.CharField(max_length=8,choices=Event.choices)
+    actor=models.ForeignKey(settings.AUTH_USER_MODEL,null=True,on_delete=models.SET_NULL)
+    created_at=models.DateTimeField(auto_now_add=True)
+    metadata=models.JSONField(default=dict,blank=True)
+    class Meta: constraints=[models.UniqueConstraint(fields=["reservation","event"],name="unique_credit_transition")]
+
+class ApprovalPolicy(Timestamped):
+    class Trigger(models.TextChoices): PRIORITY="PRIORITY","اولویت درخواست"; PROVIDER="PROVIDER","ارجاع ارائه‌دهنده"
+    class Target(models.TextChoices): PROGRAM_MANAGER="PROGRAM_MANAGER","مدیر طرح"; SENIOR="SENIOR","مرجع ارشد"
+    name=models.CharField(max_length=160)
+    trigger=models.CharField(max_length=12,choices=Trigger.choices)
+    priority=models.ForeignKey(PriorityPolicy,null=True,blank=True,on_delete=models.PROTECT)
+    requester_role=models.CharField(max_length=32,blank=True,default="")
+    target=models.CharField(max_length=20,choices=Target.choices)
+    sequence=models.PositiveSmallIntegerField(default=1)
+    is_active=models.BooleanField(default=True)
+    pauses_sla=models.BooleanField(default=True)
+    class Meta: ordering=["sequence","id"]
+    def clean(self):
+        if self.trigger==self.Trigger.PRIORITY and not self.priority_id:raise ValidationError({"priority":"اولویت برای این سیاست الزامی است."})
+        if self.trigger==self.Trigger.PROVIDER and self.priority_id:raise ValidationError({"priority":"سیاست ارجاع ارائه‌دهنده مستقل از اولویت است."})
+    def save(self,*args,**kwargs):self.full_clean();return super().save(*args,**kwargs)
+
+class SeniorApprovalConfiguration(Timestamped):
+    title=models.CharField(max_length=120,default="مرجع تأیید ارشد")
+    is_active=models.BooleanField(default=True)
+    def save(self,*args,**kwargs):
+        if self.pk not in (None,1):raise ValidationError("فقط یک تنظیم مرجع ارشد مجاز است.")
+        self.pk=1;self.full_clean();return super().save(*args,**kwargs)
+
+class ApprovalCase(Timestamped):
+    class Status(models.TextChoices): PENDING="PENDING","در انتظار"; APPROVED="APPROVED","تأییدشده"; REJECTED="REJECTED","ردشده"; CLARIFICATION_REQUESTED="CLARIFICATION_REQUESTED","نیازمند توضیح"; CANCELLED="CANCELLED","لغوشده"
+    request=models.ForeignKey(Request,on_delete=models.PROTECT,related_name="approval_cases")
+    trigger=models.CharField(max_length=12,choices=ApprovalPolicy.Trigger.choices)
+    status=models.CharField(max_length=24,choices=Status.choices,default=Status.PENDING,db_index=True)
+    requested_by=models.ForeignKey(settings.AUTH_USER_MODEL,on_delete=models.PROTECT,related_name="requested_approvals")
+    reason=models.TextField(blank=True)
+    assessment=models.TextField(blank=True)
+    estimated_time=models.CharField(max_length=120,blank=True)
+    estimated_cost=models.CharField(max_length=120,blank=True)
+    conditions=models.TextField(blank=True)
+    recommendation=models.TextField(blank=True)
+    risks=models.TextField(blank=True)
+    context_snapshot=models.JSONField(default=dict)
+    decided_at=models.DateTimeField(null=True,blank=True)
+    class Meta: indexes=[models.Index(fields=["request","trigger","status"],name="approval_case_lookup_idx")]
+
+class ApprovalStep(Timestamped):
+    class Status(models.TextChoices): BLOCKED="BLOCKED","در صف"; PENDING="PENDING","در انتظار"; APPROVED="APPROVED","تأییدشده"; REJECTED="REJECTED","ردشده"; CLARIFICATION_REQUESTED="CLARIFICATION_REQUESTED","نیازمند توضیح"; CANCELLED="CANCELLED","لغوشده"
+    case=models.ForeignKey(ApprovalCase,on_delete=models.PROTECT,related_name="steps")
+    request=models.ForeignKey(Request,on_delete=models.PROTECT,related_name="approval_steps")
+    policy=models.ForeignKey(ApprovalPolicy,null=True,on_delete=models.SET_NULL)
+    sequence=models.PositiveSmallIntegerField()
+    target=models.CharField(max_length=20,choices=ApprovalPolicy.Target.choices)
+    status=models.CharField(max_length=24,choices=Status.choices,default=Status.BLOCKED,db_index=True)
+    pauses_sla=models.BooleanField(default=True)
+    started_at=models.DateTimeField(null=True,blank=True)
+    decided_at=models.DateTimeField(null=True,blank=True)
+    decided_by=models.ForeignKey(settings.AUTH_USER_MODEL,null=True,on_delete=models.SET_NULL,related_name="approval_decisions")
+    decision_reason=models.TextField(blank=True)
+    target_snapshot=models.JSONField(default=dict)
+    class Meta:
+        ordering=["sequence","id"]
+        constraints=[models.UniqueConstraint(fields=["case","sequence"],name="unique_approval_case_step")]
+
+class ApprovalDecision(models.Model):
+    step=models.ForeignKey(ApprovalStep,on_delete=models.PROTECT,related_name="decisions")
+    actor=models.ForeignKey(settings.AUTH_USER_MODEL,on_delete=models.PROTECT)
+    outcome=models.CharField(max_length=24,choices=[("APPROVED","تأیید"),("REJECTED","رد"),("CLARIFICATION_REQUESTED","درخواست توضیح"),("AUTO_APPROVED","تأیید خودکار")])
+    reason=models.TextField(blank=True)
+    created_at=models.DateTimeField(auto_now_add=True)
+
+class ApprovalClarification(models.Model):
+    case=models.ForeignKey(ApprovalCase,on_delete=models.PROTECT,related_name="clarifications")
+    author=models.ForeignKey(settings.AUTH_USER_MODEL,on_delete=models.PROTECT)
+    body=models.TextField()
+    created_at=models.DateTimeField(auto_now_add=True)
+
+def approval_upload_path(instance,filename):return f"approvals/{instance.case.request.public_id}/{uuid.uuid4().hex}{Path(filename).suffix.lower()}"
+
+class ApprovalAttachment(Timestamped):
+    case=models.ForeignKey(ApprovalCase,on_delete=models.PROTECT,related_name="attachments")
+    uploaded_by=models.ForeignKey(settings.AUTH_USER_MODEL,on_delete=models.PROTECT)
+    file=models.FileField(upload_to=approval_upload_path)
+    original_name=models.CharField(max_length=255)
+    size=models.PositiveBigIntegerField()
+    content_type=models.CharField(max_length=120)
+
 def upload_path(instance,filename): return f"requests/{instance.request.public_id}/{uuid.uuid4().hex}{Path(filename).suffix.lower()}"
 class Attachment(Timestamped):
-    request=models.ForeignKey(Request,on_delete=models.CASCADE,related_name="attachments"); uploaded_by=models.ForeignKey(settings.AUTH_USER_MODEL,on_delete=models.PROTECT); file=models.FileField(upload_to=upload_path); original_name=models.CharField(max_length=255); size=
+    request=models.ForeignKey(Request,on_delete=models.CASCADE,related_name="attachments"); uploaded_by=models.ForeignKey(settings.AUTH_USER_MODEL,on_delete=models.PROTECT); file=models.FileField(upload_to=upload_path); original_name=models.CharField(max_length=255); size=models.PositiveBigIntegerField(); content_type=models.CharField(max_length=120); response=models.ForeignKey(RequestResponse,null=True,blank=True,on_delete=models.CASCADE,related_name="attachments")
+
+class InternalNote(Timestamped):
+    request=models.ForeignKey(Request,on_delete=models.CASCADE,related_name="internal_notes"); author=models.ForeignKey(settings.AUTH_USER_MODEL,on_delete=models.PROTECT); body=models.TextField()
+    class Meta: ordering=["created_at"]
+
+class RequestHistory(models.Model):
+    request=models.ForeignKey(Request,on_delete=models.CASCADE,related_name="history"); actor=models.ForeignKey(settings.AUTH_USER_MODEL,null=True,on_delete=models.SET_NULL); action=models.CharField(max_length=80); from_status=models.CharField(max_length=20,blank=True); to_status=models.CharField(max_length=20,blank=True); metadata=models.JSONField(default=dict,blank=True); created_at=models.DateTimeField(auto_now_add=True)
+    class Meta: ordering=["created_at"]
+
+class ActivityLog(models.Model):
+    actor=models.ForeignKey(settings.AUTH_USER_MODEL,null=True,on_delete=models.SET_NULL); action=models.CharField(max_length=100); target_type=models.CharField(max_length=60); target_id=models.CharField(max_length=80); metadata=models.JSONField(default=dict,blank=True); created_at=models.DateTimeField(auto_now_add=True)
+    class Meta: ordering=["-created_at"]
+
+class Notification(Timestamped):
+    user=models.ForeignKey(settings.AUTH_USER_MODEL,on_delete=models.CASCADE,related_name="notifications"); title=models.CharField(max_length=200); body=models.CharField(max_length=500,blank=True); request=models.ForeignKey(Request,null=True,blank=True,on_delete=models.CASCADE); read_at=models.DateTimeField(null=True,blank=True)
+    class Meta: ordering=["-created_at"]
+
+class AppSetting(Timestamped):
+    key=models.CharField(max_length=100,unique=True); value=models.JSONField(default=dict)
+    def __str__(self): return self.key
+
+class AppearanceSetting(Timestamped):
+    """Single row (pk=1); defaults apply without seeding during an upgrade."""
+    from .appearance import DEFAULT_ACCENT, DEFAULT_NAME, DEFAULT_PRIMARY, FONT_CHOICES, brand_logo_path, validate_brand_color, validate_png_logo
+    app_name=models.CharField(max_length=100,default=DEFAULT_NAME)
+    primary_color=models.CharField(max_length=7,default=DEFAULT_PRIMARY,validators=[validate_brand_color])
+    accent_color=models.CharField(max_length=7,default=DEFAULT_ACCENT,validators=[validate_brand_color])
+    base_font_size=models.PositiveSmallIntegerField(default=15,choices=[(x,str(x)) for x in range(14,19)])
+    font_family=models.CharField(max_length=16,default="system",choices=FONT_CHOICES)
+    logo=models.FileField(upload_to=brand_logo_path,blank=True,validators=[validate_png_logo])
+
+    def save(self,*args,**kwargs):
+        if self.pk not in (None,1): raise ValidationError("فقط یک تنظیم ظاهر مجاز است.")
+        self.pk=1
+        self.full_clean()
+        return super().save(*args,**kwargs)
+
+    def __str__(self): return self.app_name
+
+class LoginThrottle(models.Model):
+    key=models.CharField(max_length=64,unique=True); failures=models.PositiveSmallIntegerField(default=0); locked_until=models.DateTimeField(null=True,blank=True); updated_at=models.DateTimeField(auto_now=True)

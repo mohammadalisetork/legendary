@@ -3,7 +3,7 @@ from django.contrib.auth.admin import UserAdmin
 from django.contrib.auth.forms import UserChangeForm, UserCreationForm
 from django import forms
 import jdatetime
-from .models import ActivityLog, AppSetting, Category, Department, NonWorkingDate, Program, Project, Request, RoleAssignment, Service, ServiceFormField, User, WorkingCalendar
+from .models import ActivityLog, AppSetting, ApprovalCase, ApprovalDecision, ApprovalStep, Category, CreditLedgerEntry, CreditReservation, Department, NonWorkingDate, Program, Project, Request, RoleAssignment, Service, ServiceFormField, User, WorkingCalendar
 from .utils import audit
 
 class AuditAdminMixin:
@@ -61,7 +61,10 @@ class NonWorkingDateAdmin(AuditAdminMixin,admin.ModelAdmin):
     def jalali_date(self,obj): return jdatetime.date.fromgregorian(date=obj.date).strftime("%Y/%m/%d").translate(str.maketrans("0123456789","۰۱۲۳۴۵۶۷۸۹"))
 @admin.register(Request)
 class RequestAdmin(admin.ModelAdmin):
-    list_display=("public_id","title","department","requester","service","status","priority","assigned_owner","submitted_at"); list_filter=("department","status","priority","service__category"); search_fields=("public_id","title","requester__full_name"); readonly_fields=("public_id","department","submitted_at","first_response_at","completed_at","paused_seconds")
+    list_display=("public_id","title","department","requester","service","status","priority","assigned_owner","submitted_at"); list_filter=("department","status","priority","service__category"); search_fields=("public_id","title","requester__full_name"); readonly_fields=("public_id","department","submitted_at","first_response_at","completed_at","paused_seconds","provider_hold")
+    def get_readonly_fields(self,request,obj=None):
+        fields=super().get_readonly_fields(request,obj)
+        return (*fields,"priority","status","program","project_entity") if obj and obj.status!=Request.Status.DRAFT else fields
 
 @admin.register(Department)
 class DepartmentAdmin(admin.ModelAdmin):
@@ -97,6 +100,14 @@ class ActivityAdmin(admin.ModelAdmin):
     readonly_fields=("actor","action","target_type","target_id","metadata","created_at")
     def has_add_permission(self,request): return False
 admin.site.register([AppSetting])
+
+class GovernanceAuditAdmin(admin.ModelAdmin):
+    def has_add_permission(self,request):return False
+    def has_change_permission(self,request,obj=None):return False
+    def has_delete_permission(self,request,obj=None):return False
+
+for model in (CreditReservation,CreditLedgerEntry,ApprovalCase,ApprovalStep,ApprovalDecision):
+    admin.site.register(model,GovernanceAuditAdmin)
 
 @admin.register(Program)
 class ProgramAdmin(AuditAdminMixin,admin.ModelAdmin):

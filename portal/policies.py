@@ -211,6 +211,8 @@ def can(user, action, resource=None, department=None):
     }
     if resource and action in mutation_actions and resource.department.status == Department.Status.ARCHIVED:
         return False
+    if resource and action in mutation_actions and resource.provider_hold:
+        return False
     if is_super_admin(user):
         return True
 
@@ -305,7 +307,7 @@ def request_scope(user):
         scope |= Q(department_id__in=manager_ids) & (
             Q(assigned_owner=user) | Q(assigned_owner__isnull=True) | Q(service__default_owner=user)
         )
-    return qs.exclude(status=Request.Status.DRAFT).filter(scope).distinct()
+    return qs.exclude(status=Request.Status.DRAFT).filter(provider_hold=False).filter(scope).distinct()
 
 
 def can_be_default_owner(user, department):
@@ -313,4 +315,29 @@ def can_be_default_owner(user, department):
         return False
     return (
         is_super_admin(user)
-        or has_department_role(user, RoleAs
+        or has_department_role(user, RoleAssignment.Role.REQUEST_MANAGER, department)
+        or has_department_role(user, RoleAssignment.Role.DEPARTMENT_LEAD, department)
+    )
+
+
+def eligible_owners(department):
+    scoped_ids = RoleAssignment.objects.filter(
+        department=department,
+        scope_type=RoleAssignment.ScopeType.DEPARTMENT,
+        role__in=DEPARTMENT_OPERATIONAL_ROLES,
+        is_active=True,
+        user__is_active=True,
+    ).values_list("user_id", flat=True)
+    query = Q(pk__in=scoped_ids) | Q(role=User.Role.ADMIN)
+    if department.code == MARKET_DEVELOPMENT_CODE:
+        scoped = RoleAssignment.objects.filter(
+            user_id=OuterRef("pk"),
+            scope_type=RoleAssignment.ScopeType.DEPARTMENT,
+            role__in=DEPARTMENT_OPERATIONAL_ROLES,
+            is_active=True,
+        )
+        legacy_ids = User.objects.filter(role=User.Role.REQUEST_MANAGER, is_active=True).annotate(
+            has_scoped=Exists(scoped)
+        ).filter(has_scoped=False).values_list("pk", flat=True)
+        query |= Q(pk__in=legacy_ids)
+    return User.objects.filter(query, is_active=True).distinct()

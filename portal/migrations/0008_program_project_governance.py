@@ -165,4 +165,6 @@ class Migration(migrations.Migration):
         ),
         migrations.AddConstraint(
             model_name='project',
-            constraint=models.CheckConstraint(condition=models.Q(('status__in', ['DRAFT', '
+            constraint=models.CheckConstraint(condition=models.Q(('status__in', ['DRAFT', 'ACTIVE', 'DISABLED', 'ARCHIVED'])), name='valid_project_status'),
+        ),
+    ]

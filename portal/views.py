@@ -1,3 +1,4 @@
+import json
 from django.contrib import messages
 from django.contrib.auth import update_session_auth_hash
 from django.contrib.auth.decorators import login_required
@@ -13,10 +14,12 @@ from django.urls import reverse
 from django.utils import timezone
 from django.views.decorators.http import require_POST
 from .appearance import DEFAULT_ACCENT, DEFAULT_NAME, DEFAULT_PRIMARY
-from .forms import AppearanceForm, DepartmentForm, DepartmentLifecycleForm, DepartmentMembershipForm, DemandManagerAssignmentForm, InternalNoteForm, LoginForm, ManagerActionForm, MessageForm, ProgramForm, ProjectForm, RequestBaseForm, ServiceFamilyForm, ServiceManagementForm, request_readiness_errors, save_upload
+from .forms import AppearanceForm, DepartmentForm, DepartmentLifecycleForm, DepartmentMembershipForm, DemandManagerAssignmentForm, InternalNoteForm, LoginForm, ManagerActionForm, MessageForm, ProgramForm, ProjectForm, ProviderApprovalForm, RequestBaseForm, ServiceFamilyForm, ServiceManagementForm, request_readiness_errors, save_upload
 from .models import AppearanceSetting, Attachment, Category, Department, InternalNote, LoginThrottle, Notification, Program, Project, Request, RequestResponse, RoleAssignment, Service, User
 from .policies import Action, authorized_departments, authorized_programs, authorized_projects, can, can_access_control, can_use_request_context, department_ids_for_role, is_program_manager, is_project_manager, is_super_admin, program_ids_for_role, program_request_scope, project_ids_for_role, request_scope
 from .utils import apply_submission_timing, audit, history, notify, transition
+from .governance import GovernanceError, submit_governed_request, capacity_for, may_decide, may_view_case, decide_step, request_provider_approval, cancel_pending_approval, wallet_balance
+from .models import AllocationPeriod, ApprovalAttachment, ApprovalCase, ApprovalPolicy, ApprovalStep, CreditAllocation, PriorityPolicy, SeniorApprovalConfiguration
 
 class PortalLoginView(LoginView):
     template_name="registration/login.html"; authentication_form=LoginForm; redirect_authenticated_user=True
@@ -127,7 +130,7 @@ def request_create(request,service_id):
         if request.POST.get("action")=="submit": return submit_request(request,obj.pk)
         messages.success(request,"پیش‌نویس ذخیره شد."); return redirect("request_detail",pk=obj.pk)
     if request.method=="POST": form.mark_errors_for_accessibility()
-    return render(request,"portal/request_form.html",{"service":service,"form":form,"form_context_fields":[form[name] for name in form.context_field_names],"form_base_fields":[form[name] for name in ("project","title","priority","desired_delivery_date") if name in form.fields],"form_dynamic_fields":[form[name] for name in form.fields if name.startswith("data_")],"breadcrumbs":[{"label":"مرکز خدمات","href":reverse("service_hub")},{"label":service.department.name,"href":reverse("department_landing",args=[service.department.code])},{"label":service.category.name},{"label":service.name,"href":reverse("service_detail",args=[service.pk])},{"label":"ثبت درخواست"}]})
+    return render(request,"portal/request_form.html",{"service":service,"form":form,"credit_priorities_json":json.dumps(list(PriorityPolicy.objects.filter(is_active=True,requires_credit=True).values_list('code',flat=True))),"form_context_fields":[form[name] for name in form.context_field_names],"form_base_fields":[form[name] for name in ("project","title","priority","desired_delivery_date") if name in form.fields],"form_dynamic_fields":[form[name] for name in form.fields if name.startswith("data_")],"breadcrumbs":[{"label":"مرکز خدمات","href":reverse("service_hub")},{"label":service.department.name,"href":reverse("department_landing",args=[service.department.code])},{"label":service.category.name},{"label":service.name,"href":reverse("service_detail",args=[service.pk])},{"label":"ثبت درخواست"}]})
 
 def accessible_request(user,pk,manager=False):
     qs=Request.objects.select_related("department","service__category__department","requester","assigned_owner")
@@ -140,7 +143,7 @@ def accessible_request(user,pk,manager=False):
 @login_required
 def request_detail(request,pk):
     obj=accessible_request(request.user,pk)
-    return render(request,"portal/request_detail.html",{"item":obj,"message_form":MessageForm(),"can_edit":obj.requester_id==request.user.pk and obj.status==Request.Status.DRAFT,"can_respond":obj.requester_id==request.user.pk,"public_history":obj.history.exclude(action="INTERNAL_NOTE_ADDED"),"can_view_attachments":can(request.user,Action.REQUEST_VIEW_ATTACHMENT,resource=obj)})
+    return render(request,"portal/request_detail.html",{"item":obj,"message_form":MessageForm(),"can_edit":obj.requester_id==request.user.pk and obj.status==Request.Status.DRAFT,"can_respond":obj.requester_id==request.user.pk,"public_history":obj.history.exclude(action="INTERNAL_NOTE_ADDED"),"can_view_attachments":can(request.user,Action.REQUEST_VIEW_ATTACHMENT,resource=obj),"approval_cases":obj.approval_cases.all()})
 
 @login_required
 def request_edit(request,pk):
@@ -154,33 +157,16 @@ def request_edit(request,pk):
         if request.POST.get("action")=="submit": return submit_request(request,obj.pk)
         messages.success(request,"پیش‌نویس ذخیره شد."); return redirect("request_detail",pk=pk)
     if request.method=="POST": form.mark_errors_for_accessibility()
-    return render(request,"portal/request_form.html",{"service":obj.service,"form":form,"item":obj,"form_context_fields":[form[name] for name in form.context_field_names],"form_base_fields":[form[name] for name in ("project","title","priority","desired_delivery_date") if name in form.fields],"form_dynamic_fields":[form[name] for name in form.fields if name.startswith("data_")]})
+    return render(request,"portal/request_form.html",{"service":obj.service,"form":form,"item":obj,"credit_priorities_json":json.dumps(list(PriorityPolicy.objects.filter(is_active=True,requires_credit=True).values_list('code',flat=True))),"form_context_fields":[form[name] for name in form.context_field_names],"form_base_fields":[form[name] for name in ("project","title","priority","desired_delivery_date") if name in form.fields],"form_dynamic_fields":[form[name] for name in form.fields if name.startswith("data_")]})
 
 @login_required
 @require_POST
 def submit_request(request,pk):
     obj=accessible_request(request.user,pk)
     if obj.status!=Request.Status.DRAFT: return redirect("request_detail",pk=pk)
-    if not obj.service.is_requestable or not can(request.user,Action.REQUEST_CREATE,department=obj.department):
-        messages.error(request,"این خدمت در حال حاضر امکان ثبت درخواست جدید ندارد.")
-        return redirect("request_detail",pk=pk)
-    if obj.requester_id!=request.user.pk or not can_use_request_context(request.user,obj):
-        messages.error(request,"دسترسی طرح یا پروژهٔ انتخاب‌شده غیرفعال شده است. درخواست را ویرایش کنید و یک زمینهٔ فعال انتخاب کنید.")
-        return redirect("request_edit",pk=pk)
-    missing=request_readiness_errors(obj)
-    if missing:
-        messages.error(request,"برای ثبت نهایی این موارد را کامل کنید: "+"، ".join(missing))
-        return redirect("request_edit",pk=pk)
-    if not obj.requester_role_context:obj.requester_role_at_submission="REQUESTER"
-    else:obj.requester_role_at_submission=obj.requester_role_context
-    if obj.program_id:
-        obj.program_name_snapshot=obj.program.name; obj.program_code_snapshot=obj.program.code
-    if obj.project_entity_id:
-        obj.project_name_snapshot=obj.project_entity.name; obj.project_code_snapshot=obj.project_entity.code
-    apply_submission_timing(obj); obj.status=Request.Status.SUBMITTED; obj.save()
-    context_snapshot={"program":obj.program_code_snapshot,"program_name":obj.program_name_snapshot,"project":obj.project_code_snapshot,"project_name":obj.project_name_snapshot,"requester_role":obj.requester_role_at_submission}
-    history(obj,request.user,"REQUEST_SUBMITTED","DRAFT","SUBMITTED",context_snapshot)
-    notify(obj.assigned_owner,"درخواست جدید",f"درخواست {obj.public_id} ثبت شد.",obj)
+    try:obj=submit_governed_request(obj.pk,request.user,confirm_last=request.POST.get('confirm_last_credit')=='1')
+    except GovernanceError as exc:
+        messages.error(request,str(exc));return redirect('request_edit',pk=pk)
     messages.success(request,f"درخواست با شناسه {obj.public_id} ثبت شد."); return redirect("request_detail",pk=obj.pk)
 
 @login_required
@@ -431,7 +417,15 @@ def notifications(request): return render(request,"portal/notifications.html",{"
 @login_required
 @require_POST
 def notification_read(request,pk):
-    n=get_object_or_404(Notification,pk=pk,user=request.user); n.read_at=timezone.now(); n.save(update_fields=["read_at"]); return redirect(n.request and "request_detail" or "notifications",**({"pk":n.request_id} if n.request else {}))
+    n=get_object_or_404(Notification,pk=pk,user=request.user); n.read_at=timezone.now(); n.save(update_fields=["read_at"])
+    if n.request_id:
+        for case in n.request.approval_cases.order_by('-created_at'):
+            if may_view_case(request.user,case) and n.request.requester_id!=request.user.pk and not can(request.user,Action.REQUEST_VIEW_PROGRAM,resource=n.request) and not can(request.user,Action.REQUEST_VIEW_PROJECT,resource=n.request):
+                return redirect('approval_detail',pk=case.pk)
+        if n.request.requester_id!=request.user.pk and can(request.user,Action.REQUEST_VIEW_DEPARTMENT,resource=n.request):
+            return redirect('control_request_detail',pk=n.request_id)
+        return redirect('request_detail',pk=n.request_id)
+    return redirect('notifications')
 
 def is_manager(user): return can_access_control(user)
 @login_required
@@ -480,7 +474,7 @@ def control_request_detail(request,pk):
     if not is_manager(request.user): raise Http404
     obj=accessible_request(request.user,pk,manager=True)
     can_mutate=can(request.user,Action.REQUEST_RESPOND,resource=obj)
-    return render(request,"control/request_detail.html",{"item":obj,"message_form":MessageForm(),"note_form":InternalNoteForm(),"action_form":ManagerActionForm(request_obj=obj,initial={"status":obj.status,"owner":obj.assigned_owner}),"can_mutate":can_mutate,"can_internal_note":can(request.user,Action.REQUEST_INTERNAL_NOTE,resource=obj),"can_view_attachments":can(request.user,Action.REQUEST_VIEW_ATTACHMENT,resource=obj)})
+    return render(request,"control/request_detail.html",{"item":obj,"message_form":MessageForm(),"note_form":InternalNoteForm(),"approval_form":ProviderApprovalForm(),"approval_cases":obj.approval_cases.all(),"action_form":ManagerActionForm(request_obj=obj,initial={"status":obj.status,"owner":obj.assigned_owner}),"can_mutate":can_mutate,"can_internal_note":can(request.user,Action.REQUEST_INTERNAL_NOTE,resource=obj),"can_view_attachments":can(request.user,Action.REQUEST_VIEW_ATTACHMENT,resource=obj)})
 
 @login_required
 @require_POST
@@ -493,6 +487,8 @@ def control_action(request,pk):
         form=ManagerActionForm(request.POST,request_obj=obj)
         if form.is_valid():
             owner=form.cleaned_data.get("owner"); status=form.cleaned_data.get("status"); reason=form.cleaned_data.get("reason","")
+            if status and status!=obj.status and obj.approval_cases.filter(trigger=ApprovalPolicy.Trigger.PROVIDER,status__in=[ApprovalCase.Status.PENDING,ApprovalCase.Status.CLARIFICATION_REQUESTED]).exists():
+                messages.error(request,"تا تعیین تکلیف تأیید در جریان، وضعیت درخواست قابل تغییر نیست.");return redirect("control_request_detail",pk=pk)
             if owner!=obj.assigned_owner: old=obj.assigned_owner; obj.assigned_owner=owner; obj.save(update_fields=["assigned_owner","updated_at"]); history(obj,request.user,"OWNER_CHANGED",metadata={"from":str(old or ""),"to":str(owner or "")})
             if status and status!=obj.status: transition(obj,status,request.user,reason); notify(obj.requester,"تغییر وضعیت درخواست",f"وضعیت {obj.public_id} به «{obj.get_status_display()}» تغییر کرد."+(f" دلیل: {reason}" if reason else ""),obj)
         else:
@@ -502,4 +498,107 @@ def control_action(request,pk):
             messages.error(request,"در وضعیت فعلی امکان ارسال پیام وجود ندارد."); return redirect("control_request_detail",pk=pk)
         form=MessageForm(request.POST,request.FILES)
         if form.is_valid():
-            ask=request.POST.get("request_info")=="1"; response=RequestResponse.objects.create(request=obj,author=request.user,body=form
+            ask=request.POST.get("request_info")=="1"; response=RequestResponse.objects.create(request=obj,author=request.user,body=form.cleaned_data["body"],requests_information=ask); save_upload(obj,request.user,form.cleaned_data.get("file"),response)
+            if ask: transition(obj,Request.Status.NEED_INFO,request.user,form.cleaned_data["body"])
+            elif not obj.first_response_at: obj.first_response_at=timezone.now(); obj.save(update_fields=["first_response_at","updated_at"])
+            history(obj,request.user,"INFORMATION_REQUESTED" if ask else "MANAGER_RESPONDED"); notify(obj.requester,"پیام جدید درباره درخواست",f"برای {obj.public_id} پیام جدید ثبت شد.",obj)
+    elif kind=="note":
+        form=InternalNoteForm(request.POST)
+        if form.is_valid(): InternalNote.objects.create(request=obj,author=request.user,body=form.cleaned_data["body"]); history(obj,request.user,"INTERNAL_NOTE_ADDED")
+    if kind in {"action","message","note"} and 'form' in locals() and not form.is_valid(): messages.error(request,"اطلاعات واردشده معتبر نیست.")
+    else: messages.success(request,"تغییرات ثبت شد.")
+    return redirect("control_request_detail",pk=pk)
+
+@login_required
+def profile(request): return render(request,"portal/profile.html")
+
+
+def _managed_department(user,pk):
+    department=get_object_or_404(Department,pk=pk)
+    if not can(user,Action.DEPARTMENT_MANAGE,department=department): raise PermissionDenied
+    return department
+
+
+@login_required
+def manage_departments(request):
+    if is_super_admin(request.user): departments=Department.objects.all()
+    else: departments=Department.objects.filter(pk__in=department_ids_for_role(request.user,RoleAssignment.Role.DEPARTMENT_LEAD))
+    departments=departments.annotate(
+        family_count=Count("service_families",distinct=True),service_count=Count("service_families__services",distinct=True),member_count=Count("role_assignments",filter=Q(role_assignments__is_active=True),distinct=True)
+    )
+    if not departments.exists() and not is_super_admin(request.user): raise PermissionDenied
+    return render(request,"control/departments.html",{"departments":departments,"can_create":is_super_admin(request.user)})
+
+
+@login_required
+def manage_department_detail(request,pk):
+    department=_managed_department(request.user,pk)
+    families=department.service_families.prefetch_related("services__default_owner")
+    members=department.role_assignments.filter(is_active=True).select_related("user")
+    return render(request,"control/department_detail.html",{"department":department,"families":families,"members":members,"lifecycle_form":DepartmentLifecycleForm(department=department,actor=request.user),"membership_form":DepartmentMembershipForm(actor=request.user),"can_archive":is_super_admin(request.user)})
+
+
+@login_required
+def manage_department_edit(request,pk=None):
+    if pk:
+        department=_managed_department(request.user,pk)
+    else:
+        if not is_super_admin(request.user): raise PermissionDenied
+        department=Department()
+    form=DepartmentForm(request.POST or None,instance=department)
+    if request.method=="POST" and form.is_valid():
+        created=not department.pk; obj=form.save(); audit(request.user,"DEPARTMENT_CREATED" if created else "DEPARTMENT_UPDATED",obj,{"fields":list(form.changed_data)}); messages.success(request,"اطلاعات اداره ذخیره شد."); return redirect("manage_department_detail",pk=obj.pk)
+    return render(request,"control/object_form.html",{"form":form,"title":"ایجاد اداره" if not pk else "ویرایش اداره","department":department if pk else None})
+
+
+@login_required
+@require_POST
+def manage_department_status(request,pk):
+    department=_managed_department(request.user,pk)
+    form=DepartmentLifecycleForm(request.POST,department=department,actor=request.user)
+    if form.is_valid():
+        target=form.cleaned_data["status"]
+        if target==Department.Status.ARCHIVED and not is_super_admin(request.user): raise PermissionDenied
+        old=department.status; department.status=target; department.save(update_fields=["status","updated_at"]); audit(request.user,"DEPARTMENT_STATUS_CHANGED",department,{"from":old,"to":target}); messages.success(request,"وضعیت اداره تغییر کرد.")
+    else: messages.error(request,"تغییر وضعیت انجام نشد: "+" ".join(e for errors in form.errors.values() for e in errors))
+    return redirect("manage_department_detail",pk=pk)
+
+
+@login_required
+@require_POST
+def manage_department_members(request,pk):
+    department=_managed_department(request.user,pk)
+    if not can(request.user,Action.ROLE_MANAGE,department=department): raise PermissionDenied
+    if request.POST.get("remove"):
+        assignment=get_object_or_404(RoleAssignment,pk=request.POST["remove"],department=department,is_active=True)
+        if assignment.role==RoleAssignment.Role.DEPARTMENT_LEAD and not is_super_admin(request.user): raise PermissionDenied
+        assignment.is_active=False; assignment.save(update_fields=["is_active","updated_at"]); audit(request.user,"DEPARTMENT_MEMBERSHIP_REMOVED",assignment,{"department":department.pk,"role":assignment.role}); messages.success(request,"عضویت غیرفعال شد.")
+    else:
+        form=DepartmentMembershipForm(request.POST,actor=request.user)
+        if form.is_valid():
+            assignment,created=RoleAssignment.objects.update_or_create(user=form.cleaned_data["user"],department=department,role=form.cleaned_data["role"],defaults={"scope_type":RoleAssignment.ScopeType.DEPARTMENT,"is_active":True,"assigned_by":request.user})
+            audit(request.user,"DEPARTMENT_MEMBERSHIP_ADDED" if created else "DEPARTMENT_ROLE_CHANGED",assignment,{"department":department.pk,"role":assignment.role}); messages.success(request,"عضویت اداره ذخیره شد.")
+        else: messages.error(request,"عضویت ذخیره نشد.")
+    return redirect("manage_department_detail",pk=pk)
+
+
+@login_required
+def manage_family_edit(request,department_pk=None,pk=None):
+    family=get_object_or_404(Category,pk=pk) if pk else None
+    department=_managed_department(request.user,family.department_id if family else department_pk)
+    if not can(request.user,Action.CATALOGUE_MANAGE,department=department): raise PermissionDenied
+    form=ServiceFamilyForm(request.POST or None,instance=family)
+    if request.method=="POST" and form.is_valid():
+        obj=form.save(False); obj.department=department; obj.save(); audit(request.user,"SERVICE_FAMILY_CREATED" if not family else "SERVICE_FAMILY_UPDATED",obj,{"department":department.pk,"fields":list(form.changed_data)}); messages.success(request,"خانواده خدمت ذخیره شد."); return redirect("manage_department_detail",pk=department.pk)
+    return render(request,"control/object_form.html",{"form":form,"title":"ایجاد خانواده خدمت" if not family else "ویرایش خانواده خدمت","department":department})
+
+
+@login_required
+def manage_service_edit(request,department_pk=None,pk=None):
+    service=get_object_or_404(Service.objects.select_related("category__department"),pk=pk) if pk else None
+    department=_managed_department(request.user,service.department.pk if service else department_pk)
+    if not can(request.user,Action.CATALOGUE_MANAGE,department=department): raise PermissionDenied
+    form=ServiceManagementForm(request.POST or None,instance=service,department=department)
+    if request.method=="POST" and form.is_valid():
+        obj=form.save(); audit(request.user,"SERVICE_CREATED" if not service else "SERVICE_UPDATED",obj,{"department":department.pk,"fields":list(form.changed_data)}); messages.success(request,"خدمت ذخیره شد."); return redirect("manage_department_detail",pk=department.pk)
+    return render(request,"control/object_form.html",{"form":form,"title":"ایجاد خدمت" if not service else "ویرایش خدمت","department":department})

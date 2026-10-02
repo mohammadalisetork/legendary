@@ -48,6 +48,7 @@ export function initDemandContext() {
         project.add(option);
       }
       if (selected && [...project.options].some((item) => item.value === selected)) project.value = selected;
+      project.dispatchEvent(new Event('change'));
       status.textContent = data.projects.length ? '' : 'برای این محدوده پروژهٔ فعالی وجود ندارد.';
     } catch {
       if (requestNumber === sequence) status.textContent = 'فهرست پروژه‌ها دریافت نشد؛ زمینه را دوباره انتخاب کنید.';

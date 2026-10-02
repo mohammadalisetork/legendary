@@ -32,4 +32,8 @@ Existing requests stay unlinked unless an administrator later maps them using ap
 
 The eventual relationship can evolve as `Request → Program / Project → Department → Service Family → Service` without deleting V1 requests. Department membership and demand-side Program/Project scope are distinct dimensions. Provider queue authorization must continue to intersect the provider's Department scope even when that user also holds a demand-side role.
 
-Future priority allocation must be keyed by exactly `Program × Department × Priority × Allocation Period`, with transactional reservation/ledger handling. Program-only quotas would incorrectly couple Departments. The current schema does not implement quotas, multi-level approvals, Department hubs, or analytics exports; these remain later-release architecture work. No PostgreSQL server, Docker engine, or interactive browser is available in this execution environment, so those runtime/build and visual checks are not verified h
+Future priority allocation must be keyed by exactly `Program × Department × Priority × Allocation Period`, with transactional reservation/ledger handling. Program-only quotas would incorrectly couple Departments. The current schema does not implement quotas, multi-level approvals, Department hubs, or analytics exports; these remain later-release architecture work. No PostgreSQL server, Docker engine, or interactive browser is available in this execution environment, so those runtime/build and visual checks are not verified here.
+
+## Verification added
+
+`portal/test_release_2_2.py` covers model lifecycle and scope constraints, Program/Project request visibility, read-only behavior, internal-note privacy, attachment authorization, draft privacy, provider-scope isolation, submission snapshots, stale assignment rejection, selector scoping, Super Admin management, and dashboard aggregation.
