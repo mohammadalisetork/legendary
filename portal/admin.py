@@ -3,7 +3,7 @@ from django.contrib.auth.admin import UserAdmin
 from django.contrib.auth.forms import UserChangeForm, UserCreationForm
 from django import forms
 import jdatetime
-from .models import ActivityLog, AppSetting, Category, Department, NonWorkingDate, Request, RoleAssignment, Service, ServiceFormField, User, WorkingCalendar
+from .models import ActivityLog, AppSetting, Category, Department, NonWorkingDate, Program, Project, Request, RoleAssignment, Service, ServiceFormField, User, WorkingCalendar
 from .utils import audit
 
 class AuditAdminMixin:
@@ -77,16 +77,16 @@ class DepartmentAdmin(admin.ModelAdmin):
 
 @admin.register(RoleAssignment)
 class RoleAssignmentAdmin(admin.ModelAdmin):
-    list_display=("user","role","scope_type","department","is_active","assigned_by","created_at")
-    list_filter=("role","scope_type","department","is_active"); search_fields=("user__username","user__full_name","department__name")
-    readonly_fields=("created_at","updated_at","assigned_by")
+    list_display=("user","role","scope_type","department","program","project","is_active","assigned_by","created_at","deactivated_at")
+    list_filter=("role","scope_type","department","program","project","is_active"); search_fields=("user__username","user__full_name","department__name","program__name","project__name")
+    readonly_fields=("created_at","updated_at","assigned_by","deactivated_at")
     def save_model(self,request,obj,form,change):
         previous=RoleAssignment.objects.filter(pk=obj.pk).values("role","department_id","is_active").first() if change else None
         if not obj.assigned_by_id: obj.assigned_by=request.user
         super().save_model(request,obj,form,change)
         action="DEPARTMENT_MEMBERSHIP_ADDED" if not change else "DEPARTMENT_ROLE_CHANGED"
         if previous and previous["is_active"] and not obj.is_active: action="DEPARTMENT_MEMBERSHIP_REMOVED"
-        audit(request.user,action,obj,{"fields":list(form.changed_data),"department":obj.department_id,"role":obj.role})
+        audit(request.user,action,obj,{"fields":list(form.changed_data),"department":obj.department_id,"program":obj.program_id,"project":obj.project_id,"role":obj.role})
     def delete_model(self,request,obj):
         audit(request.user,"DEPARTMENT_MEMBERSHIP_REMOVED",obj,{"department":obj.department_id,"role":obj.role})
         super().delete_model(request,obj)
@@ -97,3 +97,17 @@ class ActivityAdmin(admin.ModelAdmin):
     readonly_fields=("actor","action","target_type","target_id","metadata","created_at")
     def has_add_permission(self,request): return False
 admin.site.register([AppSetting])
+
+@admin.register(Program)
+class ProgramAdmin(AuditAdminMixin,admin.ModelAdmin):
+    list_display=("code","name","status","created_at","updated_at")
+    list_filter=("status",);search_fields=("code","name")
+    readonly_fields=("created_at","updated_at")
+    def has_delete_permission(self,request,obj=None):return False
+
+@admin.register(Project)
+class ProjectAdmin(AuditAdminMixin,admin.ModelAdmin):
+    list_display=("code","name","program","status","created_at","updated_at")
+    list_filter=("status","program");search_fields=("code","name","program__name")
+    readonly_fields=("created_at","updated_at")
+    def has_delete_permission(self,request,obj=None):return False

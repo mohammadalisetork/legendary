@@ -55,6 +55,72 @@ class Department(Timestamped):
     def is_requestable(self): return self.status==self.Status.PUBLISHED
     def __str__(self): return self.short_name or self.name
 
+class Program(Timestamped):
+    class Status(models.TextChoices):
+        DRAFT="DRAFT","پیش‌نویس"
+        ACTIVE="ACTIVE","فعال"
+        DISABLED="DISABLED","غیرفعال"
+        ARCHIVED="ARCHIVED","بایگانی‌شده"
+    code=models.SlugField(max_length=64,unique=True)
+    name=models.CharField(max_length=200)
+    description=models.TextField(blank=True)
+    status=models.CharField(max_length=16,choices=Status.choices,default=Status.DRAFT,db_index=True)
+    class Meta:
+        ordering=["name"]
+        constraints=[models.CheckConstraint(condition=models.Q(status__in=["DRAFT","ACTIVE","DISABLED","ARCHIVED"]),name="valid_program_status")]
+        indexes=[models.Index(fields=["status","code"],name="portal_prog_status_code_idx")]
+    def clean(self):
+        super().clean()
+        if not self.pk and self.status != self.Status.DRAFT:
+            raise ValidationError({"status":"طرح جدید باید ابتدا در وضعیت پیش‌نویس ایجاد شود."})
+        if self.pk:
+            old=Program.objects.filter(pk=self.pk).values_list("status",flat=True).first()
+            allowed={self.Status.DRAFT:{self.Status.ACTIVE},self.Status.ACTIVE:{self.Status.DISABLED,self.Status.ARCHIVED},self.Status.DISABLED:{self.Status.ACTIVE,self.Status.ARCHIVED},self.Status.ARCHIVED:set()}
+            if old and self.status!=old and self.status not in allowed[old]:
+                raise ValidationError({"status":"تغییر وضعیت طرح با چرخهٔ عمر آن سازگار نیست."})
+        if self.status==self.Status.ARCHIVED and self.pk and self.projects.filter(status=Project.Status.ACTIVE).exists():
+            raise ValidationError({"status":"ابتدا پروژه‌های فعال را غیرفعال یا بایگانی کنید."})
+    def save(self,*args,**kwargs):
+        self.full_clean()
+        return super().save(*args,**kwargs)
+    def __str__(self): return self.name
+
+class Project(Timestamped):
+    class Status(models.TextChoices):
+        DRAFT="DRAFT","پیش‌نویس"
+        ACTIVE="ACTIVE","فعال"
+        DISABLED="DISABLED","غیرفعال"
+        ARCHIVED="ARCHIVED","بایگانی‌شده"
+    code=models.SlugField(max_length=64,unique=True)
+    name=models.CharField(max_length=200)
+    program=models.ForeignKey(Program,on_delete=models.PROTECT,related_name="projects")
+    description=models.TextField(blank=True)
+    status=models.CharField(max_length=16,choices=Status.choices,default=Status.DRAFT,db_index=True)
+    class Meta:
+        ordering=["program__name","name"]
+        constraints=[models.CheckConstraint(condition=models.Q(status__in=["DRAFT","ACTIVE","DISABLED","ARCHIVED"]),name="valid_project_status")]
+        indexes=[models.Index(fields=["program","status"],name="portal_proj_prog_status_idx")]
+    @property
+    def is_requestable(self):
+        return self.status==self.Status.ACTIVE and self.program.status==Program.Status.ACTIVE
+    def clean(self):
+        super().clean()
+        if not self.pk and self.status != self.Status.DRAFT:
+            raise ValidationError({"status":"پروژهٔ جدید باید ابتدا در وضعیت پیش‌نویس ایجاد شود."})
+        if self.pk:
+            old=Project.objects.filter(pk=self.pk).values("status","program_id").first()
+            allowed={self.Status.DRAFT:{self.Status.ACTIVE},self.Status.ACTIVE:{self.Status.DISABLED,self.Status.ARCHIVED},self.Status.DISABLED:{self.Status.ACTIVE,self.Status.ARCHIVED},self.Status.ARCHIVED:set()}
+            if old and self.status!=old["status"] and self.status not in allowed[old["status"]]:
+                raise ValidationError({"status":"تغییر وضعیت پروژه با چرخهٔ عمر آن سازگار نیست."})
+            if old and self.program_id!=old["program_id"]:
+                raise ValidationError({"program":"طرح والد پروژه پس از ایجاد قابل تغییر نیست."})
+        if self.status==self.Status.ACTIVE and self.program_id and self.program.status!=Program.Status.ACTIVE:
+            raise ValidationError({"status":"پروژه فقط زیر یک طرح فعال می‌تواند فعال شود."})
+    def save(self,*args,**kwargs):
+        self.full_clean()
+        return super().save(*args,**kwargs)
+    def __str__(self): return f"{self.program.name} · {self.name}"
+
 class RoleAssignment(Timestamped):
     class Role(models.TextChoices):
         REQUESTER="REQUESTER","درخواست‌دهنده"
@@ -63,31 +129,52 @@ class RoleAssignment(Timestamped):
         SUPERVISOR="SUPERVISOR","ناظر"
         EXECUTIVE_VIEWER="EXECUTIVE_VIEWER","مشاهده‌گر ارشد"
         SUPER_ADMIN="SUPER_ADMIN","مدیر ارشد سامانه"
+        PROGRAM_MANAGER="PROGRAM_MANAGER","مدیر طرح"
+        PROJECT_MANAGER="PROJECT_MANAGER","مدیر پروژه"
     class ScopeType(models.TextChoices):
         GLOBAL="GLOBAL","سراسری"
         DEPARTMENT="DEPARTMENT","اداره"
+        PROGRAM="PROGRAM","طرح"
+        PROJECT="PROJECT","پروژه"
     user=models.ForeignKey(settings.AUTH_USER_MODEL,on_delete=models.CASCADE,related_name="role_assignments")
     role=models.CharField(max_length=32,choices=Role.choices,db_index=True)
     scope_type=models.CharField(max_length=16,choices=ScopeType.choices,db_index=True)
     department=models.ForeignKey(Department,null=True,blank=True,on_delete=models.PROTECT,related_name="role_assignments")
+    program=models.ForeignKey(Program,null=True,blank=True,on_delete=models.PROTECT,related_name="role_assignments")
+    project=models.ForeignKey(Project,null=True,blank=True,on_delete=models.PROTECT,related_name="role_assignments")
     is_active=models.BooleanField(default=True,db_index=True)
+    deactivated_at=models.DateTimeField(null=True,blank=True)
     assigned_by=models.ForeignKey(settings.AUTH_USER_MODEL,null=True,blank=True,on_delete=models.SET_NULL,related_name="assigned_roles")
     class Meta:
         ordering=["user__username","role"]
         constraints=[
-            models.CheckConstraint(condition=(models.Q(scope_type="GLOBAL",department__isnull=True)|models.Q(scope_type="DEPARTMENT",department__isnull=False)),name="role_assignment_scope_target"),
-            models.CheckConstraint(condition=(models.Q(scope_type="GLOBAL",role__in=["REQUESTER","SUPERVISOR","EXECUTIVE_VIEWER","SUPER_ADMIN"])|models.Q(scope_type="DEPARTMENT",role__in=["REQUEST_MANAGER","DEPARTMENT_LEAD"])),name="role_assignment_role_scope"),
+            models.CheckConstraint(condition=(models.Q(scope_type="GLOBAL",department__isnull=True,program__isnull=True,project__isnull=True)|models.Q(scope_type="DEPARTMENT",department__isnull=False,program__isnull=True,project__isnull=True)|models.Q(scope_type="PROGRAM",department__isnull=True,program__isnull=False,project__isnull=True)|models.Q(scope_type="PROJECT",department__isnull=True,program__isnull=False,project__isnull=False)),name="role_assignment_scope_target"),
+            models.CheckConstraint(condition=(models.Q(scope_type="GLOBAL",role__in=["REQUESTER","SUPERVISOR","EXECUTIVE_VIEWER","SUPER_ADMIN"])|models.Q(scope_type="DEPARTMENT",role__in=["REQUEST_MANAGER","DEPARTMENT_LEAD"])|models.Q(scope_type="PROGRAM",role="PROGRAM_MANAGER")|models.Q(scope_type="PROJECT",role="PROJECT_MANAGER")),name="role_assignment_role_scope"),
             models.UniqueConstraint(fields=["user","role","scope_type"],condition=models.Q(scope_type="GLOBAL"),name="unique_global_role_assignment"),
             models.UniqueConstraint(fields=["user","role","department"],condition=models.Q(scope_type="DEPARTMENT"),name="unique_department_role_assignment"),
+            models.UniqueConstraint(fields=["user","role","program"],condition=models.Q(scope_type="PROGRAM"),name="unique_program_role_assignment"),
+            models.UniqueConstraint(fields=["user","role","project"],condition=models.Q(scope_type="PROJECT"),name="unique_project_role_assignment"),
         ]
-        indexes=[models.Index(fields=["department","role","is_active"],name="portal_role_departm_a46b0d_idx"),models.Index(fields=["user","scope_type","is_active"],name="portal_role_user_id_9e7628_idx")]
+        indexes=[models.Index(fields=["department","role","is_active"],name="portal_role_departm_a46b0d_idx"),models.Index(fields=["user","scope_type","is_active"],name="portal_role_user_id_9e7628_idx"),models.Index(fields=["user","role","program","is_active"],name="portal_role_prog_active_idx"),models.Index(fields=["user","role","project","is_active"],name="portal_role_proj_active_idx")]
     def clean(self):
         super().clean()
         if self.scope_type==self.ScopeType.GLOBAL and self.department_id:
             raise ValidationError({"department":"نقش سراسری نباید اداره داشته باشد."})
         if self.scope_type==self.ScopeType.DEPARTMENT and not self.department_id:
             raise ValidationError({"department":"برای نقش اداره‌ای انتخاب اداره الزامی است."})
+        if self.scope_type in {self.ScopeType.GLOBAL,self.ScopeType.DEPARTMENT} and (self.program_id or self.project_id):
+            raise ValidationError("نقش و محدودهٔ سازمانی با هم سازگار نیستند.")
+        if self.scope_type==self.ScopeType.PROGRAM and (not self.program_id or self.project_id or self.department_id or self.role!=self.Role.PROGRAM_MANAGER):
+            raise ValidationError("مدیر طرح باید دقیقاً در محدودهٔ یک طرح تعریف شود.")
+        if self.scope_type==self.ScopeType.PROJECT:
+            if not self.project_id or not self.program_id or self.department_id or self.role!=self.Role.PROJECT_MANAGER:
+                raise ValidationError("مدیر پروژه باید به پروژه و طرح همان پروژه متصل باشد.")
+            if self.project.program_id!=self.program_id:
+                raise ValidationError({"program":"طرح انتخاب‌شده با پروژه هم‌خوانی ندارد."})
     def save(self,*a,**kw):
+        if self.is_active:self.deactivated_at=None
+        elif not self.deactivated_at:self.deactivated_at=timezone.now()
+        self.full_clean()
         super().save(*a,**kw)
         self.user.save(update_fields=["is_staff","is_superuser"])
     def delete(self,*a,**kw):
@@ -180,6 +267,14 @@ class Request(Timestamped):
     }
     public_id=models.CharField(max_length=32,unique=True,editable=False,db_index=True); requester=models.ForeignKey(settings.AUTH_USER_MODEL,on_delete=models.PROTECT,related_name="requests")
     department=models.ForeignKey(Department,on_delete=models.PROTECT,related_name="requests")
+    program=models.ForeignKey(Program,null=True,blank=True,on_delete=models.PROTECT,related_name="requests")
+    project_entity=models.ForeignKey(Project,null=True,blank=True,on_delete=models.PROTECT,related_name="requests")
+    requester_role_context=models.CharField(max_length=32,blank=True,default="")
+    requester_role_at_submission=models.CharField(max_length=32,blank=True,default="")
+    program_name_snapshot=models.CharField(max_length=200,blank=True,default="")
+    program_code_snapshot=models.CharField(max_length=64,blank=True,default="")
+    project_name_snapshot=models.CharField(max_length=200,blank=True,default="")
+    project_code_snapshot=models.CharField(max_length=64,blank=True,default="")
     requesting_unit=models.CharField(max_length=160); service=models.ForeignKey(Service,on_delete=models.PROTECT,related_name="requests"); project=models.CharField(max_length=200)
     title=models.CharField(max_length=250); request_data=models.JSONField(default=dict); desired_delivery_date=models.DateField(null=True,blank=True)
     priority=models.CharField(max_length=12,choices=Priority.choices,default=Priority.NORMAL); status=models.CharField(max_length=20,choices=Status.choices,default=Status.DRAFT,db_index=True)
@@ -187,8 +282,10 @@ class Request(Timestamped):
     submitted_at=models.DateTimeField(null=True,blank=True); first_response_at=models.DateTimeField(null=True,blank=True); current_stage_started_at=models.DateTimeField(default=timezone.now); completed_at=models.DateTimeField(null=True,blank=True)
     expected_initial_response_at=models.DateTimeField(null=True,blank=True); estimated_delivery_min=models.DateField(null=True,blank=True); estimated_delivery_max=models.DateField(null=True,blank=True)
     operational_paused_at=models.DateTimeField(null=True,blank=True); paused_seconds=models.PositiveBigIntegerField(default=0); needs_user_action=models.BooleanField(default=False,db_index=True)
-    class Meta: ordering=["-updated_at"]; indexes=[models.Index(fields=["requester","status"]),models.Index(fields=["assigned_owner","status"]),models.Index(fields=["department","status"],name="portal_requ_departm_9bda87_idx")]
+    class Meta: ordering=["-updated_at"]; indexes=[models.Index(fields=["requester","status"]),models.Index(fields=["assigned_owner","status"]),models.Index(fields=["department","status"],name="portal_requ_departm_9bda87_idx"),models.Index(fields=["program","status"],name="portal_requ_program_status_idx"),models.Index(fields=["project_entity","status"],name="portal_requ_project_status_idx")]
     def save(self,*a,**kw):
+        if self.project_entity_id and self.program_id != self.project_entity.program_id:
+            raise ValidationError({"project_entity":"پروژه باید متعلق به طرح انتخاب‌شده باشد."})
         if self._state.adding:
             self.department=self.service.category.department
             if self.assigned_owner_id:
@@ -239,45 +336,4 @@ class RequestResponse(Timestamped):
 
 def upload_path(instance,filename): return f"requests/{instance.request.public_id}/{uuid.uuid4().hex}{Path(filename).suffix.lower()}"
 class Attachment(Timestamped):
-    request=models.ForeignKey(Request,on_delete=models.CASCADE,related_name="attachments"); uploaded_by=models.ForeignKey(settings.AUTH_USER_MODEL,on_delete=models.PROTECT); file=models.FileField(upload_to=upload_path); original_name=models.CharField(max_length=255); size=models.PositiveBigIntegerField(); content_type=models.CharField(max_length=120); response=models.ForeignKey(RequestResponse,null=True,blank=True,on_delete=models.CASCADE,related_name="attachments")
-
-class InternalNote(Timestamped):
-    request=models.ForeignKey(Request,on_delete=models.CASCADE,related_name="internal_notes"); author=models.ForeignKey(settings.AUTH_USER_MODEL,on_delete=models.PROTECT); body=models.TextField()
-    class Meta: ordering=["created_at"]
-
-class RequestHistory(models.Model):
-    request=models.ForeignKey(Request,on_delete=models.CASCADE,related_name="history"); actor=models.ForeignKey(settings.AUTH_USER_MODEL,null=True,on_delete=models.SET_NULL); action=models.CharField(max_length=80); from_status=models.CharField(max_length=20,blank=True); to_status=models.CharField(max_length=20,blank=True); metadata=models.JSONField(default=dict,blank=True); created_at=models.DateTimeField(auto_now_add=True)
-    class Meta: ordering=["created_at"]
-
-class ActivityLog(models.Model):
-    actor=models.ForeignKey(settings.AUTH_USER_MODEL,null=True,on_delete=models.SET_NULL); action=models.CharField(max_length=100); target_type=models.CharField(max_length=60); target_id=models.CharField(max_length=80); metadata=models.JSONField(default=dict,blank=True); created_at=models.DateTimeField(auto_now_add=True)
-    class Meta: ordering=["-created_at"]
-
-class Notification(Timestamped):
-    user=models.ForeignKey(settings.AUTH_USER_MODEL,on_delete=models.CASCADE,related_name="notifications"); title=models.CharField(max_length=200); body=models.CharField(max_length=500,blank=True); request=models.ForeignKey(Request,null=True,blank=True,on_delete=models.CASCADE); read_at=models.DateTimeField(null=True,blank=True)
-    class Meta: ordering=["-created_at"]
-
-class AppSetting(Timestamped):
-    key=models.CharField(max_length=100,unique=True); value=models.JSONField(default=dict)
-    def __str__(self): return self.key
-
-class AppearanceSetting(Timestamped):
-    """Single row (pk=1); defaults apply without seeding during an upgrade."""
-    from .appearance import DEFAULT_ACCENT, DEFAULT_NAME, DEFAULT_PRIMARY, FONT_CHOICES, brand_logo_path, validate_brand_color, validate_png_logo
-    app_name=models.CharField(max_length=100,default=DEFAULT_NAME)
-    primary_color=models.CharField(max_length=7,default=DEFAULT_PRIMARY,validators=[validate_brand_color])
-    accent_color=models.CharField(max_length=7,default=DEFAULT_ACCENT,validators=[validate_brand_color])
-    base_font_size=models.PositiveSmallIntegerField(default=15,choices=[(x,str(x)) for x in range(14,19)])
-    font_family=models.CharField(max_length=16,default="system",choices=FONT_CHOICES)
-    logo=models.FileField(upload_to=brand_logo_path,blank=True,validators=[validate_png_logo])
-
-    def save(self,*args,**kwargs):
-        if self.pk not in (None,1): raise ValidationError("فقط یک تنظیم ظاهر مجاز است.")
-        self.pk=1
-        self.full_clean()
-        return super().save(*args,**kwargs)
-
-    def __str__(self): return self.app_name
-
-class LoginThrottle(models.Model):
-    key=models.CharField(max_length=64,unique=True); failures=models.PositiveSmallIntegerField(default=0); locked_until=models.DateTimeField(null=True,blank=True); updated_at=models.DateTimeField(auto_now=True)
+    request=models.ForeignKey(Request,on_delete=models.CASCADE,related_name="attachments"); uploaded_by=models.ForeignKey(settings.AUTH_USER_MODEL,on_delete=models.PROTECT); file=models.FileField(upload_to=upload_path); original_name=models.CharField(max_length=255); size=

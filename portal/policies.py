@@ -1,6 +1,6 @@
 from django.db.models import Exists, OuterRef, Q
 
-from .models import Department, Request, RoleAssignment, User
+from .models import Department, Program, Project, Request, RoleAssignment, User
 
 
 MARKET_DEVELOPMENT_CODE = "market-development"
@@ -26,6 +26,14 @@ class Action:
     ROLE_MANAGE = "role.manage"
     SETTINGS_MANAGE = "settings.manage"
     AUDIT_VIEW = "audit.view"
+    PROGRAM_VIEW = "program.view"
+    PROGRAM_MANAGE = "program.manage"
+    PROJECT_VIEW = "project.view"
+    PROJECT_MANAGE = "project.manage"
+    PROGRAM_ASSIGNMENT_MANAGE = "program.assignment.manage"
+    REQUEST_VIEW_PROGRAM = "request.view_program"
+    REQUEST_VIEW_PROJECT = "request.view_project"
+    DASHBOARD_PROGRAM = "dashboard.program"
 
 
 DEPARTMENT_OPERATIONAL_ROLES = {
@@ -96,6 +104,81 @@ def department_ids_for_role(user, role):
     return ids
 
 
+def program_ids_for_role(user, role=RoleAssignment.Role.PROGRAM_MANAGER):
+    if not getattr(user, "is_authenticated", False) or not user.is_active:
+        return set()
+    return set(_active_assignments(user).filter(
+        scope_type=RoleAssignment.ScopeType.PROGRAM, role=role,
+    ).values_list("program_id", flat=True))
+
+
+def project_ids_for_role(user, role=RoleAssignment.Role.PROJECT_MANAGER):
+    if not getattr(user, "is_authenticated", False) or not user.is_active:
+        return set()
+    return set(_active_assignments(user).filter(
+        scope_type=RoleAssignment.ScopeType.PROJECT, role=role,
+    ).values_list("project_id", flat=True))
+
+
+def is_program_manager(user):
+    return bool(program_ids_for_role(user))
+
+
+def is_project_manager(user):
+    return bool(project_ids_for_role(user))
+
+
+def authorized_programs(user, *, active_only=False):
+    if not getattr(user, "is_authenticated", False) or not user.is_active:
+        return Program.objects.none()
+    if is_super_admin(user):
+        qs=Program.objects.all()
+    else:
+        qs=Program.objects.filter(pk__in=program_ids_for_role(user))
+    return qs.filter(status=Program.Status.ACTIVE) if active_only else qs
+
+
+def authorized_projects(user, *, active_only=False):
+    if not getattr(user, "is_authenticated", False) or not user.is_active:
+        return Project.objects.none()
+    if is_super_admin(user):
+        qs=Project.objects.select_related("program")
+    else:
+        qs=Project.objects.select_related("program").filter(pk__in=project_ids_for_role(user))
+    return qs.filter(status=Project.Status.ACTIVE,program__status=Program.Status.ACTIVE) if active_only else qs
+
+
+def program_request_scope(user):
+    """Requester-safe demand visibility; provider queue policy stays separate."""
+    if not getattr(user, "is_authenticated", False) or not user.is_active:
+        return Request.objects.none()
+    own=Q(requester=user)
+    program_ids=program_ids_for_role(user)
+    project_ids=project_ids_for_role(user)
+    managed=Q(pk__in=[])
+    if program_ids:
+        managed|=Q(program_id__in=program_ids) & ~Q(status=Request.Status.DRAFT)
+    if project_ids:
+        managed|=Q(project_entity_id__in=project_ids) & ~Q(status=Request.Status.DRAFT)
+    return Request.objects.select_related("program","project_entity","department","service__category__department","requester").prefetch_related("responses__attachments","attachments","history").filter(own|managed).distinct()
+
+
+def can_use_request_context(user,request_obj):
+    """Revalidate a draft's selected demand context at final submission."""
+    role=request_obj.requester_role_context
+    if not role and not request_obj.program_id and not request_obj.project_entity_id:
+        return True
+    if role==RoleAssignment.Role.PROGRAM_MANAGER:
+        return bool(request_obj.program_id and request_obj.program.status==Program.Status.ACTIVE
+            and program_ids_for_role(user,RoleAssignment.Role.PROGRAM_MANAGER).intersection({request_obj.program_id})
+            and (not request_obj.project_entity_id or request_obj.project_entity.program_id==request_obj.program_id and request_obj.project_entity.is_requestable))
+    if role==RoleAssignment.Role.PROJECT_MANAGER:
+        return bool(request_obj.project_entity_id and request_obj.project_entity.is_requestable
+            and request_obj.project_entity.program_id==request_obj.program_id
+            and request_obj.project_entity_id in project_ids_for_role(user,RoleAssignment.Role.PROJECT_MANAGER))
+    return False
+
+
 def authorized_departments(user, *, operational=False):
     """Departments visible in a scoped workspace; never use this as the only mutation guard."""
     if not getattr(user, "is_authenticated", False) or not user.is_active:
@@ -142,6 +225,8 @@ def can(user, action, resource=None, department=None):
     if action == Action.REQUEST_VIEW_ATTACHMENT:
         if resource and resource.requester_id == user.pk:
             return True
+        if resource and (can(user,Action.REQUEST_VIEW_PROGRAM,resource=resource) or can(user,Action.REQUEST_VIEW_PROJECT,resource=resource)):
+            return True
         return bool(resource and (
             has_department_role(user, RoleAssignment.Role.DEPARTMENT_LEAD, resource.department_id)
             or _manager_can_operate_request(user, resource)
@@ -154,6 +239,21 @@ def can(user, action, resource=None, department=None):
             or has_department_role(user, RoleAssignment.Role.DEPARTMENT_LEAD, resource.department_id)
             or _manager_can_operate_request(user, resource)
         )
+    if action == Action.REQUEST_VIEW_PROGRAM:
+        return bool(resource and (
+            resource.requester_id==user.pk
+            or resource.status!=Request.Status.DRAFT and resource.program_id in program_ids_for_role(user)
+        ))
+    if action == Action.REQUEST_VIEW_PROJECT:
+        return bool(resource and (
+            resource.requester_id==user.pk
+            or resource.status!=Request.Status.DRAFT and resource.project_entity_id in project_ids_for_role(user)
+        ))
+    if action in {Action.PROGRAM_VIEW,Action.PROJECT_VIEW}:
+        target=getattr(resource,"pk",resource)
+        return bool(target and (target in program_ids_for_role(user) if action==Action.PROGRAM_VIEW else target in project_ids_for_role(user)))
+    if action==Action.DASHBOARD_PROGRAM:
+        return is_program_manager(user) or is_project_manager(user)
     if action in mutation_actions:
         if not resource or resource.status == Request.Status.DRAFT:
             return False
@@ -213,29 +313,4 @@ def can_be_default_owner(user, department):
         return False
     return (
         is_super_admin(user)
-        or has_department_role(user, RoleAssignment.Role.REQUEST_MANAGER, department)
-        or has_department_role(user, RoleAssignment.Role.DEPARTMENT_LEAD, department)
-    )
-
-
-def eligible_owners(department):
-    scoped_ids = RoleAssignment.objects.filter(
-        department=department,
-        scope_type=RoleAssignment.ScopeType.DEPARTMENT,
-        role__in=DEPARTMENT_OPERATIONAL_ROLES,
-        is_active=True,
-        user__is_active=True,
-    ).values_list("user_id", flat=True)
-    query = Q(pk__in=scoped_ids) | Q(role=User.Role.ADMIN)
-    if department.code == MARKET_DEVELOPMENT_CODE:
-        scoped = RoleAssignment.objects.filter(
-            user_id=OuterRef("pk"),
-            scope_type=RoleAssignment.ScopeType.DEPARTMENT,
-            role__in=DEPARTMENT_OPERATIONAL_ROLES,
-            is_active=True,
-        )
-        legacy_ids = User.objects.filter(role=User.Role.REQUEST_MANAGER, is_active=True).annotate(
-            has_scoped=Exists(scoped)
-        ).filter(has_scoped=False).values_list("pk", flat=True)
-        query |= Q(pk__in=legacy_ids)
-    return User.objects.filter(query, is_active=True).distinct()
+        or has_department_role(user, RoleAs
