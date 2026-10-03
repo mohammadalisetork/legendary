@@ -5,6 +5,7 @@ import { initDialogs } from './js/dialogs.js';
 import { initJalaliAccessibility } from './js/jalali-accessibility.js';
 import { initDemandContext } from './js/demand-context.js';
 import { initCapacity } from './js/capacity.js';
+import { initOnboardingTour } from './js/onboarding-tour.js';
 
 initDialogs();
 initForms();
@@ -13,3 +14,4 @@ initAppearance();
 initJalaliAccessibility();
 initDemandContext();
 initCapacity();
+initOnboardingTour();

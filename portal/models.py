@@ -18,6 +18,7 @@ class User(AbstractUser):
     job_title=models.CharField("عنوان شغلی",max_length=160,blank=True)
     role=models.CharField("نقش",max_length=24,choices=Role.choices,default=Role.USER,db_index=True)
     must_change_password=models.BooleanField("تغییر اجباری رمز",default=True)
+    onboarding_tour_completed=models.BooleanField("راهنمای آغاز دیده شده",default=False)
     last_activity_at=models.DateTimeField(null=True,blank=True)
     def save(self,*a,**kw):
         scoped_super_admin=False

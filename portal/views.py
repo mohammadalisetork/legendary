@@ -95,11 +95,6 @@ def fa_digits(v): return str(v).translate(str.maketrans("0123456789","۰۱۲۳۴
 @login_required
 def home(request):
     own=Request.objects.filter(requester=request.user).exclude(status=Request.Status.DRAFT)
-    categories=Category.objects.filter(active=True,department__status=Department.Status.PUBLISHED).select_related("department").annotate(service_count=Count("services",filter=Q(services__active=True)))
-    return render(request,"portal/home.html",{"recent":own[:5],"action_required":own.filter(needs_user_action=True)[:5],"categories":categories,"draft_count":Request.objects.filter(requester=request.user,status=Request.Status.DRAFT).count()})
-
-@login_required
-def service_hub(request):
     departments=Department.objects.filter(status=Department.Status.PUBLISHED).annotate(
         family_count=Count("service_families",filter=Q(service_families__active=True),distinct=True),
         service_count=Count("service_families__services",filter=Q(service_families__active=True,service_families__services__active=True),distinct=True),
@@ -107,7 +102,31 @@ def service_hub(request):
     q=request.GET.get("q","").strip()
     if q:
         departments=departments.filter(Q(name__icontains=q)|Q(short_name__icontains=q)|Q(description__icontains=q)|Q(service_families__services__name__icontains=q)|Q(service_families__services__code__icontains=q)).distinct()
-    return render(request,"portal/service_hub.html",{"departments":departments,"q":q,"breadcrumbs":[{"label":"مرکز خدمات"}]})
+    return render(request,"portal/home.html",{
+        "recent":own[:5],"action_required":own.filter(needs_user_action=True)[:5],
+        "departments":departments,"q":q,"draft_count":Request.objects.filter(requester=request.user,status=Request.Status.DRAFT).count(),
+        "show_onboarding_tour":request.GET.get("tour") == "replay" or not request.user.onboarding_tour_completed,
+        "manual_onboarding_tour":request.GET.get("tour") == "replay",
+    })
+
+@login_required
+def service_hub(request):
+    # Reuse the canonical post-login home at the historic URL so old bookmarks
+    # and external links keep working without a second catalogue experience.
+    return home(request)
+
+
+@login_required
+@require_POST
+def onboarding_tour_state(request):
+    action=request.POST.get("action")
+    if action not in {"finish","skip"}:
+        return JsonResponse({"error":"Invalid action"},status=400)
+    # A replay is intentionally ephemeral and never changes the automatic first-run state.
+    if request.POST.get("manual") != "1" and not request.user.onboarding_tour_completed:
+        request.user.onboarding_tour_completed=True
+        request.user.save(update_fields=["onboarding_tour_completed"])
+    return JsonResponse({"ok":True})
 
 @login_required
 def department_landing(request,code):
