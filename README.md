@@ -18,7 +18,7 @@
 ## راه‌اندازی با Docker
 
 ```bash
-cp .env.example .env
+cp deploy/production.env.example .env
 # مقادیر محرمانه، دامنه و گذرواژه‌ها را در .env تغییر دهید
 docker compose up --build -d
 curl http://127.0.0.1:8000/health
@@ -30,7 +30,7 @@ curl http://127.0.0.1:8000/health
 
 ## متغیرهای محیطی
 
-متغیرهای لازم و اختیاری در `.env.example` آمده‌اند. در محیط عملیاتی حداقل `APP_ENV`، `APP_URL`، `AUTH_SECRET`، `ALLOWED_HOSTS`، `CSRF_TRUSTED_ORIGINS` و تنظیمات پایگاه داده و ذخیره‌سازی را تعیین کنید. اتصال پایگاه داده از طریق `DATABASE_URL` یا مجموعه کامل متغیرهای `POSTGRES_*` پذیرفته می‌شود. Compose از روش دوم استفاده می‌کند تا گذرواژه‌های دارای نویسه‌های ویژه بدون نیاز به URL-encoding معتبر باشند. مقدار واقعی رمز یا کلید را وارد مخزن نکنید.
+نمونهٔ محیط محلی در `.env.example` و نمونهٔ placeholder تولید در `deploy/production.env.example` است. در محیط عملیاتی حداقل `APP_ENV`، `APP_URL`، `AUTH_SECRET`، `ALLOWED_HOSTS`، `CSRF_TRUSTED_ORIGINS` و تنظیمات پایگاه داده و ذخیره‌سازی را تعیین کنید. اتصال پایگاه داده از طریق `DATABASE_URL` یا مجموعه کامل متغیرهای `POSTGRES_*` پذیرفته می‌شود. Compose از روش دوم استفاده می‌کند تا گذرواژه‌های دارای نویسه‌های ویژه بدون نیاز به URL-encoding معتبر باشند. مقدار واقعی رمز یا کلید را وارد مخزن نکنید.
 
 برای S3-compatible مقدار `FILE_STORAGE_TYPE=s3` و متغیرهای `S3_ENDPOINT`، `S3_BUCKET`، `S3_ACCESS_KEY` و `S3_SECRET_KEY` را تنظیم کنید. در حالت `local` مسیر `UPLOAD_PATH` باید روی volume پایدار قرار گیرد.
 

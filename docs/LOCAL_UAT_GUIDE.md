@@ -10,13 +10,15 @@ This guide runs the Release 2.5 application from this branch and creates a small
 
 Start from `release/2.5-management-intelligence-reporting`. The repository contains no UAT database or uploaded runtime files; migrations and the seed command create the data locally.
 
-## Recommended: Docker Compose with PostgreSQL
+From the repository root, create the ignored local environment file:
 
 ```bash
 cp .env.example .env
 ```
 
-Edit `.env` for local use. Set `APP_ENV=development`, `SECURE_SSL_REDIRECT=false`, `APP_URL=http://localhost:8000`, `ALLOWED_HOSTS=localhost,127.0.0.1`, and a disposable local `POSTGRES_PASSWORD`. Use a dummy local `AUTH_SECRET` (at least 50 characters). Remove the example initial-admin variables or leave them empty; the demo seed creates the local accounts. Do not use production credentials or a production database.
+It contains safe local-only placeholders and needs no edits for the default Docker UAT setup. `AUTH_SECRET` is Django's `SECRET_KEY` setting in this application; `APP_ENV=development` enables `DEBUG`. The project does not load `.env` automatically for native Python commands.
+
+## Recommended: Docker Compose with PostgreSQL
 
 ```bash
 docker compose up --build -d
@@ -36,7 +38,7 @@ APP_ENV=development .venv/bin/python manage.py seed_demo --confirm-local-only
 APP_ENV=development .venv/bin/python manage.py runserver 127.0.0.1:8000
 ```
 
-The default local database is `db.sqlite3` in the checkout and is ignored by Git. To use another database, set `DATABASE_URL=sqlite:////absolute/path/to/local-uat.sqlite3` for each command. `seed_demo` requires both the explicit confirmation flag and local/development/test mode; for PostgreSQL it also restricts the configured host to `db`, `localhost`, or a loopback address.
+The native Python path uses SQLite by default; `db.sqlite3` is ignored by Git. It does not read `.env`, so leave the commands above as shown. To use another SQLite database, set `DATABASE_URL=sqlite:////absolute/path/to/local-uat.sqlite3` for each command. `seed_demo` requires both the explicit confirmation flag and local/development/test mode; for PostgreSQL it also restricts the configured host to `db`, `localhost`, or a loopback address.
 
 ## Demo accounts
 
