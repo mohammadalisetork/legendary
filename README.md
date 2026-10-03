@@ -66,3 +66,7 @@ python -m venv .venv
 .venv/bin/python manage.py seed_catalog
 .venv/bin/python manage.py test
 ```
+
+## مرور محلی Release 2.5
+
+برای اجرای محیط محلی UAT با دادهٔ نمونه، حساب‌های نمایشی، سناریوهای نقش‌محور و خروجی‌های داشبورد، راهنمای [LOCAL_UAT_GUIDE](docs/LOCAL_UAT_GUIDE.md) را دنبال کنید. فرمان `seed_demo --confirm-local-only` فقط در حالت توسعه/آزمون محلی فعال است و برای دیتابیس تولیدی مجاز نیست.
