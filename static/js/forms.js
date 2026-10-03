@@ -1,5 +1,5 @@
 export function initForms() {
-  const firstError = document.querySelector('form .field [aria-invalid="true"]');
+  const firstError = document.querySelector('form .field.has-error input:not([type="hidden"]), form .field.has-error select, form .field.has-error textarea, form .field.has-error .date-trigger');
   firstError?.focus({ preventScroll: false });
   for (const form of document.querySelectorAll('form[data-submit-guard]')) {
     form.addEventListener('submit', (event) => {

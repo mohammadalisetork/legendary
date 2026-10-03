@@ -237,4 +237,5 @@ class EndToEndFlowTests(TestCase):
         response=self.client.get(reverse("request_create",args=[self.service.pk]))
         self.assertContains(response,'class="btn btn-md btn-tertiary"')
         self.assertContains(response,'name="action" value="draft" class="btn btn-md secondary"')
-        self.assertContains(response,'name="action" value="submit" class="btn btn-lg primary"')
+        self.assertContains(response,'name="action" value="submit" class="btn btn-md primary"')
+        self.assertContains(response,'ثبت نهایی</button>')

@@ -119,6 +119,7 @@ class ManagementReportingTests(TestCase):
         self.client.force_login(self.lead)
         page=self.client.get(reverse('analytics_department',args=[self.department.code]))
         self.assertEqual(page.status_code,200);self.assertEqual(page.context['selected']['department'],self.department.code)
+        self.assertEqual(page.context['chart_data']['sla'],[])
         self.assertIn('department=bi-dept-a',page.context['request_urls']['total'])
         self.assertEqual(self.client.get(reverse('analytics_department',args=[self.foreign_department.code])).status_code,404)
         self.client.force_login(self.program_manager)
@@ -201,3 +202,37 @@ class ManagementReportingTests(TestCase):
         current=metrics(facts_for(analytics_scope(self.admin),window,{},now=self.now))
         self.assertEqual((previous['total'],current['total'],current['total']-previous['total']),(1,1,0))
         self.assertEqual(completed_during(analytics_scope(self.admin),window,{})[self.now.date()],1)
+
+    def test_analytics_shell_local_charts_and_scope_preserving_reset(self):
+        self.make_request(program=self.program,project=self.project)
+        self.client.force_login(self.lead)
+        page=self.client.get(reverse('analytics_department',args=[self.department.code]))
+        self.assertEqual(page.status_code,200)
+        self.assertEqual(page.context['clear_url'],reverse('analytics_department',args=[self.department.code]))
+        self.assertEqual(page.context['chart_data']['matrix'],page.context['matrix_rows'])
+        self.assertContains(page,'vendor/echarts-5.6.0.min.js')
+        self.assertContains(page,'data-report-chart="matrix"')
+        self.assertContains(page,'توزیع وضعیت فعلی')
+        self.client.force_login(self.admin)
+        executive_shell=self.client.get(reverse('analytics_dashboard'))
+        self.assertEqual(executive_shell.content.decode().count('data-tour-title="گزارش و تحلیل"'),1)
+
+    def test_capacity_dashboard_shows_utilization_without_counting_released_as_used(self):
+        item=self.make_request(program=self.program,project=self.project,priority=Request.Priority.EMERGENCY)
+        period=AllocationPeriod.objects.create(name='Capacity test',kind=AllocationPeriod.Kind.QUARTER,starts_on=date(2026,9,1),ends_on=date(2026,12,31))
+        wallet=CreditAllocation.objects.create(program=self.program,department=self.department,priority=PriorityPolicy.objects.get(code=Request.Priority.EMERGENCY),period=period,quantity=4)
+        CreditReservation.objects.create(request=item,allocation=wallet,status=CreditReservation.Status.RELEASED)
+        self.client.force_login(self.admin)
+        page=self.client.get(reverse('capacity_dashboard'))
+        self.assertEqual(page.status_code,200)
+        row=next(row for row in page.context['rows'] if row['wallet'].pk==wallet.pk)
+        self.assertEqual((row['released'],row['utilization_pct'],row['remaining']),(1,0,4))
+        self.assertContains(page,'آزادشده')
+
+    def test_department_setup_checklist_keeps_existing_actions(self):
+        self.client.force_login(self.lead)
+        page=self.client.get(reverse('manage_department_detail',args=[self.department.pk]))
+        self.assertEqual(page.status_code,200)
+        for label in ('راهنمای راه‌اندازی','مدیر اداره و اعضای عملیاتی','خانواده، خدمت و فرم پویا','بازبینی پیش‌نمایش و انتشار'):
+            self.assertContains(page,label)
+        self.assertContains(page,reverse('manage_department_preview',args=[self.department.pk]))

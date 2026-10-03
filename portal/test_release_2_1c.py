@@ -143,9 +143,9 @@ class EnterpriseDesignSystemTests(TestCase):
     def test_request_actions_dynamic_field_and_jalali(self):
         self.client.force_login(self.requester)
         response = self.client.get(reverse("request_create", args=[self.service_a.pk]))
-        for text in ("انصراف", "ذخیره پیش‌نویس", "ثبت نهایی درخواست", "جزئیات خدمت", "انتخاب تاریخ"):
+        for text in ("انصراف", "ذخیره پیش‌نویس", "ثبت نهایی", "جزئیات خدمت", "انتخاب تاریخ"):
             self.assertContains(response, text)
-        self.assertContains(response, 'name="action" value="submit" class="btn btn-lg primary"')
+        self.assertContains(response, 'name="action" value="submit" class="btn btn-md primary"')
         self.assertContains(response, 'name="data_detail"')
         invalid = self.client.post(reverse("request_create", args=[self.service_a.pk]), {"action": "submit", "project": "طرح", "title": "عنوان", "priority": "NORMAL"})
         self.assertContains(invalid, 'aria-invalid="true"')

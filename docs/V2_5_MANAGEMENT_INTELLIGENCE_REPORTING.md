@@ -12,7 +12,7 @@ Dimensions are Department, Program, Project, Service Family, Service, status, pr
 
 Available periods: today, last 7/30 days, current Jalali month/quarter, six Jalali months, Jalali year to date/full year and custom inclusive ISO dates. The UI displays Jalali dates; ISO is used for the native date input. Previous comparisons use the immediately preceding equivalent elapsed range, using Jalali calendar boundaries where relevant. The Department/Program/Service dashboard route forces its dimension and carries it through drill-down, Excel and PDF. Project, Family and Service selectors hide incompatible choices in the UI; the server intersects all filters and enforces role scope independently.
 
-The server-rendered Django templates use vendored Chart.js 4.5.0 with Persian RTL labels. The executive view has trend, workload, status, SLA, service, resolution, aging, owner, request flow, priority, Program × Department and credit visualizations. Grouped tables and supported chart bars link to filtered request metadata. No Program/Department “best/worst” score is assigned.
+The server-rendered Django templates use locally vendored Apache ECharts 5.6.0 with Persian RTL labels. The executive view has trend, workload, current status, SLA, service, resolution, aging, owner, priority, Program × Department and credit visualizations. Grouped tables and supported chart marks link to filtered request metadata. No Program/Department “best/worst” score is assigned. Numeric table equivalents remain available from the dashboard.
 
 ## Access and outputs
 
@@ -28,4 +28,4 @@ No database migration is added. Existing 2.4 migrations and historical requests 
 
 ## Deployment notes
 
-Install pinned `requirements.txt`, run the existing migration/collectstatic flow and use the reverse proxy already documented in README. Vendored Chart.js and DejaVu font/licenses are part of the repository; no CDN or browser renderer is needed for PDF. Routes: `/analytics/`, `/analytics/departments/<code>/`, `/analytics/programs/<id>/`, `/analytics/services/<id>/`, `/analytics/requests/`, `/analytics/export.xlsx`, `/analytics/report.pdf`.
+Install pinned `requirements.txt`, run the existing migration/collectstatic flow and use the reverse proxy already documented in README. ECharts 5.6.0 and its Apache-2.0 license, plus DejaVu font/licenses, are vendored locally; the dashboard has no CDN dependency, and PDF generation does not use a browser renderer. Routes: `/analytics/`, `/analytics/departments/<code>/`, `/analytics/programs/<id>/`, `/analytics/services/<id>/`, `/analytics/requests/`, `/analytics/export.xlsx`, `/analytics/report.pdf`.

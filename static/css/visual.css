@@ -336,3 +336,120 @@ th { font-weight: 700; font-size: .78rem; letter-spacing: 0.02em; }
 @media (max-width: 780px) {
   .topbar-user { border: 0; box-shadow: none; background: transparent; padding: 0; border-radius: 0; }
 }
+
+/* Reusable hierarchy for reporting, operations and setup guidance. */
+.report-page-head { align-items: center; gap: 16px; }
+.report-page-head > div:first-child > small, .report-section-heading small,
+.report-table-heading small, .report-downloads > div > small { color: var(--text-muted); font-weight: 700; }
+.report-actions { flex: 0 0 auto; }
+.filter-bar--report { border-radius: var(--radius-lg); }
+.report-filter-grid--primary { grid-template-columns: minmax(170px, 1.2fr) minmax(170px, 1fr) minmax(150px, .8fr) auto; }
+.report-filter-grid--advanced { grid-template-columns: repeat(auto-fit, minmax(155px, 1fr)); }
+.report-filter-advanced > summary { min-height: 36px; display: flex; align-items: center; gap: 8px; }
+.filter-count { display: inline-grid; min-width: 22px; min-height: 22px; place-items: center; border-radius: 999px; background: var(--surface-subtle); color: var(--primary); font-size: .75rem; }
+.active-filter-chips { display: flex; flex-wrap: wrap; gap: 7px; }
+.filter-chip { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface-subtle); padding: 4px 8px; color: var(--text-secondary); font-size: .78rem; }
+.filter-chip button { min-width: 24px; min-height: 24px; border: 0; border-radius: 50%; background: transparent; color: var(--primary); cursor: pointer; }
+.report-dataset-context { margin: 0; padding-top: 9px; border-top: 1px solid var(--border); color: var(--text-muted); font-size: .8rem; }
+.report-pulse { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin: 14px 0 18px; }
+.report-kpi { display: grid; align-content: start; gap: 6px; min-width: 0; min-height: 132px; padding: 17px 18px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); box-shadow: var(--elevation-surface); color: var(--text-primary); text-decoration: none; transition: border-color var(--motion-fast), transform var(--motion-fast), box-shadow var(--motion-fast); }
+.report-kpi:hover, .report-kpi:focus-visible { transform: translateY(-2px); border-color: var(--primary); box-shadow: var(--elevation-raised); }
+.report-kpi-label { color: var(--text-secondary); font-size: .83rem; font-weight: 700; }
+.report-kpi strong { font-size: clamp(1.55rem, 2.3vw, 2rem); line-height: 1.2; font-weight: 800; font-variant-numeric: tabular-nums; }
+.report-kpi small { color: var(--text-muted); line-height: 1.55; }
+.report-kpi--sla { border-top: 3px solid var(--success); }
+.report-kpi--overdue { border-top: 3px solid var(--danger); }
+.report-kpi--open { border-top: 3px solid var(--primary); }
+.report-kpi--completion { border-top: 3px solid var(--accent); }
+.report-health { display: grid; grid-template-columns: 1.2fr 1fr 1fr; gap: 12px; margin-bottom: 16px; }
+.report-health-card { min-width: 0; border-radius: var(--radius-lg); }
+.report-section-heading, .report-table-heading, .report-chart-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.report-section-heading h2, .report-table-heading h2, .report-chart-heading h3 { margin: 2px 0 0; font-size: 1rem; }
+.report-health-mark { display: grid; width: 30px; height: 30px; flex: 0 0 auto; place-items: center; border-radius: 50%; background: #e5f4ed; color: #126044; font-weight: 800; }
+.report-health-mark--warning { background: #fff2db; color: #78500e; }
+.report-health-mark--info { background: #eaf4fb; color: #154f80; }
+.health-meter { display: grid; gap: 6px; margin-top: 16px; }
+.health-meter > div:first-child { display: flex; justify-content: space-between; gap: 12px; }
+.health-meter b, .risk-pair strong, .approval-pulse strong { font-variant-numeric: tabular-nums; }
+.meter-track { height: 8px; overflow: hidden; border-radius: 99px; background: var(--surface-subtle); }
+.meter-track span { display: block; width: var(--meter, 0%); height: 100%; border-radius: inherit; background: var(--success); transition: width 350ms ease; }
+.health-meter small, .report-muted, .report-delta { color: var(--text-muted); font-size: .8rem; }
+.risk-pair, .approval-pulse { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 15px 0 10px; }
+.risk-pair a, .approval-pulse > div { display: grid; gap: 2px; padding: 10px; border: 1px solid var(--border); border-radius: var(--radius-md); color: inherit; text-decoration: none; }
+.risk-pair strong, .approval-pulse strong { font-size: 1.25rem; }
+.risk-pair a:first-child strong { color: var(--danger); }
+.approval-pulse { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.approval-pulse span, .risk-pair span { color: var(--text-muted); font-size: .78rem; }
+.report-secondary-kpis { margin-bottom: 18px; }
+.report-secondary-kpis > summary { display: flex; justify-content: space-between; gap: 12px; cursor: pointer; font-weight: 700; }
+.report-secondary-kpis > summary span { color: var(--primary); font-size: .82rem; }
+.report-secondary-kpis .report-kpis { margin-bottom: 12px; }
+.report-section-heading--main { align-items: end; margin: 25px 0 13px; }
+.report-section-heading--main h2 { font-size: 1.2rem; }
+.report-section-heading--main p { margin: 0; color: var(--text-muted); font-size: .82rem; }
+.report-chart-grid { gap: 14px; }
+.report-chart-card { min-width: 0; overflow: hidden; border-radius: var(--radius-lg); }
+.report-chart-heading { min-height: 48px; }
+.report-chart-heading p { margin: 5px 0 0; color: var(--text-muted); font-size: .78rem; }
+.chart-interaction-hint { color: var(--text-muted); font-size: .74rem; white-space: nowrap; }
+.report-chart-plot { width: 100%; height: 290px; min-height: 240px; }
+.report-chart-card--matrix .report-chart-plot { height: 360px; }
+.report-chart-card--service .report-chart-plot, .report-chart-card--dept .report-chart-plot, .report-chart-card--owner .report-chart-plot { height: 340px; }
+.chart-numeric-details { border-top: 1px solid var(--border); padding-top: 9px; font-size: .8rem; }
+.chart-numeric-details summary { cursor: pointer; color: var(--primary); font-weight: 600; }
+.chart-numeric-details [data-chart-table] { max-height: 230px; overflow: auto; }
+.chart-numeric-details table { min-width: 0; width: 100%; font-size: .8rem; }
+.report-table { overflow: hidden; border-radius: var(--radius-lg); }
+.report-table-heading { align-items: center; margin-bottom: 10px; }
+.report-table-heading > span { color: var(--text-muted); font-size: .78rem; }
+.report-downloads { align-items: center; border-radius: var(--radius-lg); }
+.credit-utilization { display: flex; align-items: center; gap: 8px; min-width: 135px; }
+.credit-utilization progress { width: 88px; height: 9px; accent-color: var(--primary); }
+.credit-utilization b { font-variant-numeric: tabular-nums; font-size: .82rem; }
+.onboarding-checklist { border-radius: var(--radius-lg); }
+.onboarding-checklist .section-title { align-items: center; }
+.setup-steps { list-style: none; padding: 0; margin: 0; }
+.setup-step { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 10px 8px; border-bottom: 1px solid var(--border); }
+.setup-step:last-child { border-bottom: 0; }
+.setup-step__number { display: grid; width: 30px; height: 30px; place-items: center; border: 1px solid var(--border); border-radius: 50%; color: var(--text-muted); font-weight: 700; }
+.setup-step.is-complete .setup-step__number { border-color: #a9d8c5; background: #e5f4ed; color: #126044; }
+.setup-step.is-current { border-radius: var(--radius-sm); background: var(--surface-subtle); }
+.setup-step > div { display: grid; gap: 3px; }
+.setup-step small { color: var(--text-muted); font-size: .78rem; }
+.setup-step a { color: var(--primary); font-size: .82rem; font-weight: 700; }
+.form-error-summary { margin: 0 0 16px; padding: 14px 16px; border: 1px solid color-mix(in srgb, var(--danger) 36%, var(--border)); border-inline-start: 4px solid var(--danger); border-radius: var(--radius-md); background: color-mix(in srgb, var(--danger) 5%, var(--surface)); }
+.form-error-summary h2 { margin: 0 0 3px; font-size: 1rem; }
+.form-error-summary p { margin: 0 0 6px; color: var(--text-secondary); font-size: .85rem; }
+.form-error-summary ul { margin: 0; padding-inline-start: 1.2rem; color: var(--danger); }
+.form-error-summary a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
+.field.has-error input, .field.has-error select, .field.has-error textarea { border-color: var(--danger); }
+.table-wrap--sticky thead th { top: 0; }
+.table-wrap--sticky { max-height: min(72vh, 760px); overflow: auto; }
+@media (min-width: 781px) and (max-width: 900px) {
+  .sidebar nav { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 2px 7px; }
+  .sidebar nav span { grid-column: 1 / -1; }
+  .sidebar nav a { min-width: 0; }
+}
+@media (max-width: 900px) {
+  .report-health { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .report-health-card--sla { grid-column: 1 / -1; }
+  .report-pulse { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 640px) {
+  .report-page-head { display: grid; }
+  .report-actions { justify-content: flex-start; flex-wrap: wrap; }
+  .report-filter-grid--primary, .report-filter-grid--advanced { grid-template-columns: 1fr; }
+  .report-filter-actions { display: flex; }
+  .report-pulse, .report-health { grid-template-columns: 1fr; }
+  .report-health-card--sla { grid-column: auto; }
+  .report-kpi { min-height: 108px; }
+  .report-section-heading--main { display: grid; }
+  .report-chart-plot { height: 260px; }
+  .report-chart-card--matrix .report-chart-plot { height: 320px; }
+  .setup-step { grid-template-columns: 30px minmax(0, 1fr); }
+  .setup-step > a { grid-column: 2; }
+  .table-wrap--sticky { max-height: 68vh; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+}

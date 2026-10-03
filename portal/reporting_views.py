@@ -83,13 +83,18 @@ def context_for(request,forced=None):
         ("تأیید",lambda f:f.request.provider_hold),("اجرا",lambda f:f.status==Request.Status.IN_PROGRESS),
         ("تکمیل",lambda f:f.status==Request.Status.COMPLETED))]
     resolution=[dict(name=label,total=sum(f.resolution_seconds is not None and lo<=f.resolution_seconds/86400<hi for f in facts)) for label,lo,hi in (("کمتر از ۲ روز",0,2),("۲ تا ۵ روز",2,5),("۵ تا ۱۰ روز",5,10),("۱۰ روز و بیشتر",10,float('inf')))]
-    chart=dict(trend=timeline,department=groups["department"],status=groups["status"],sla=[{"name":"پاسخ اولیه","total":current["first_sla"] or 0},{"name":"تکمیل","total":current["completion_sla"] or 0}],
-        service=groups["service"][:10],resolution=resolution,aging=aging(facts),owner=groups["owner"],flow=flow,priority=groups["priority"],matrix=cells[:12],
-        credit=[{"name":f'{r["program"]} · {r["department"]} · {r["priority"]}',"total":r["utilization"] or 0} for r in credits[:10]])
+    chart=dict(trend=timeline,department=groups["department"],status=groups["status"],sla=[row for row in (
+        {"name":"پاسخ اولیه","total":current["first_sla"],"samples":current["first_sla_count"]},
+        {"name":"تکمیل","total":current["completion_sla"],"samples":current["completion_sla_count"]}) if row["total"] is not None],
+        service=groups["service"][:10],resolution=resolution,aging=aging(facts),owner=groups["owner"],flow=flow,priority=groups["priority"],matrix=cells,
+        credit=[{"name":f'{r["program"]} · {r["department"]} · {r["priority"]}',"total":r["utilization"],
+                 "quantity":r["quantity"],"reserved":r["reserved"],"consumed":r["consumed"],"released":r["released"],"remaining":r["remaining"]} for r in credits[:10]])
+    chart["credit"]=[row for row in chart["credit"] if row["total"] is not None]
+    chart["approval"]=[{"name":"در انتظار","total":approvals["pending"]},{"name":"تأییدشده","total":approvals["approved"]},{"name":"ردشده","total":approvals["rejected"]}]
     return dict(scope=scope,window=window,filters=filters,facts=facts,kpis=current,previous=previous,comparisons=comparisons,
         groups=groups,matrix_rows=cells,approvals=approvals,credits=credits,chart_data=chart,aging_rows=chart["aging"],flow_rows=flow,trend_rows=timeline,
         period_options=(("today","امروز"),("7d","۷ روز اخیر"),("30d","۳۰ روز اخیر"),("month","ماه جاری"),("quarter","فصل جاری"),("6m","۶ ماه اخیر"),("ytd","ابتدای سال تا امروز"),("year","سال جاری"),("custom","بازه دلخواه")),
-        chart_titles=(("trend","روند تقاضا و تکمیل"),("department","بار کاری اداره‌ها"),("status","توزیع وضعیت"),("sla","عملکرد SLA"),("service","تقاضای خدمات"),("resolution","توزیع زمان حل"),("aging","سن درخواست‌های باز"),("owner","بار مدیران درخواست"),("flow","جریان درخواست"),("priority","توزیع اولویت"),("matrix","طرح × اداره"),("credit","مصرف اعتبار")),
+        chart_titles=(("trend","روند درخواست و تکمیل"),("sla","سلامت SLA"),("department","بار کاری اداره‌ها"),("owner","بار مدیران درخواست"),("service","تقاضای خدمات"),("aging","سن درخواست‌های باز"),("matrix","طرح × اداره"),("priority","توزیع اولویت"),("credit","بهره‌برداری اعتبار"),("approval","وضعیت تأییدها"),("status","توزیع وضعیت فعلی"),("resolution","توزیع زمان حل")),
         report_sections=(("summary","خلاصه"),("demand","تقاضا"),("sla","SLA"),("department","اداره"),("program","طرح"),("service","خدمت"),("credit","اعتبار"),("approval","تأیید"),("appendix","پیوست درخواست‌ها")),
         filter_query=urlencode(params),selected=params,request_urls={key:report_url(params,{"metric":key}) for key in ("total","new","open","completed","pending","overdue","at_risk")},**options_for(scope))
 
@@ -113,7 +118,11 @@ def dashboard(request,kind="executive",code=None,pk=None):
         program_ids=program_ids_for_role(request.user)|set(Project.objects.filter(pk__in=project_ids_for_role(request.user)).values_list("program_id",flat=True))
         direct=obj.pk in departments if kind=="department" else obj.pk in program_ids if kind=="program" else obj.category.department_id in departments
         if not (scoped or direct or global_access(request.user)):raise Http404
-    ctx.update(title=title,kind=kind)
+    clear_url=reverse("analytics_dashboard")
+    if kind=="department":clear_url=reverse("analytics_department",args=[code])
+    elif kind=="program":clear_url=reverse("analytics_program",args=[pk])
+    elif kind=="service":clear_url=reverse("analytics_service",args=[pk])
+    ctx.update(title=title,kind=kind,clear_url=clear_url)
     return render(request,"control/analytics.html",ctx)
 
 

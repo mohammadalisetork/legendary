@@ -2,6 +2,7 @@
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.db import transaction
+from django.db.models import Count, Q
 from django.http import FileResponse, Http404, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
@@ -58,9 +59,20 @@ def capacity_dashboard(request):
         from .models import Project
         program_ids=program_ids_for_role(request.user)|set(Project.objects.filter(pk__in=project_ids_for_role(request.user)).values_list('program_id',flat=True))
         wallets=CreditAllocation.objects.filter(program_id__in=program_ids)
-    wallets=wallets.select_related('program','department','priority','period').order_by('program__name','department__name','priority__display_order','-period__starts_on')
-    rows=[{'wallet':w,'reserved':w.reservations.filter(status='RESERVED').count(),
-           'consumed':w.reservations.filter(status='CONSUMED').count(),'remaining':wallet_balance(w)} for w in wallets]
+    wallets=wallets.select_related('program','department','priority','period').annotate(
+        reserved_count=Count('reservations',filter=Q(reservations__status='RESERVED')),
+        consumed_count=Count('reservations',filter=Q(reservations__status='CONSUMED')),
+        released_count=Count('reservations',filter=Q(reservations__status='RELEASED')),
+    ).order_by('program__name','department__name','priority__display_order','-period__starts_on')
+    rows=[]
+    for wallet in wallets:
+        reserved=wallet.reserved_count
+        consumed=wallet.consumed_count
+        released=wallet.released_count
+        used=reserved+consumed
+        rows.append({'wallet':wallet,'reserved':reserved,'consumed':consumed,'released':released,
+                     'remaining':wallet.quantity-used,
+                     'utilization_pct':min(100,round(used*100/wallet.quantity)) if wallet.quantity else 0})
     return render(request,'control/capacity.html',{'rows':rows,'can_manage':is_super_admin(request.user),
         'priorities':PriorityPolicy.objects.all(),'periods':AllocationPeriod.objects.all(),
         'policies':ApprovalPolicy.objects.select_related('priority').all(),
@@ -176,6 +188,9 @@ def approval_inbox(request):
     if status not in {'PENDING','APPROVED','REJECTED'}:raise Http404
     if status=='PENDING':cases=[case for case in cases if case.status in {ApprovalCase.Status.PENDING,ApprovalCase.Status.CLARIFICATION_REQUESTED}]
     else:cases=[case for case in cases if case.status==status]
+    if status=='PENDING':
+        now=timezone.now()
+        for case in cases:case.waiting_age_seconds=max(0,int((now-case.created_at).total_seconds()))
     return render(request,'portal/approval_inbox.html',{'cases':cases,'status':status})
 
 
