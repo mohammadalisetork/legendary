@@ -48,7 +48,7 @@
   .sidebar nav { margin-top: 6px; padding-bottom: 3px; overflow: visible; flex: none; }
   .sidebar nav a { min-height: 36px; }
   .sidebar nav .nav-label { display: inline-flex; }
-  .sidebar form { display: none; margin-top: 0; }
+  .sidebar form { display: block; margin-top: 10px; }
   .topbar { padding: 10px 18px; }
   .topbar small { display: none; }
   .content { padding: 18px 16px 40px; }

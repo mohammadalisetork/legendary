@@ -12,7 +12,7 @@ DEFAULT_NAME = "مرکز خدمات راهکارهای هوشمند"
 DEFAULT_PRIMARY = "#1764a5"
 DEFAULT_ACCENT = "#0d786c"
 FONT_CHOICES = (
-    ("system", "Vazirmatn (پیش‌فرض)"),
+    ("system", "قلم سامانه"),
     ("tahoma", "Tahoma"),
     ("arial", "Arial"),
 )
