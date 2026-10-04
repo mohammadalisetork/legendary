@@ -389,9 +389,19 @@ class CreditAllocationForm(forms.ModelForm):
     class Meta:
         model=CreditAllocation
         fields=['program','department','priority','period','quantity','is_active']
+        labels={
+            'program':'طرح',
+            'department':'اداره',
+            'priority':'اولویت',
+            'period':'دوره',
+            'quantity':'مقدار تخصیص',
+            'is_active':'فعال',
+        }
     def __init__(self,*args,**kwargs):
         super().__init__(*args,**kwargs)
         self.fields['priority'].queryset=PriorityPolicy.objects.filter(requires_credit=True)
+        self.fields['quantity'].widget.attrs.update({'min': 0, 'inputmode': 'numeric'})
+        self.fields['is_active'].help_text='تخصیص غیرفعال در رزرو اعتبار جدید استفاده نمی‌شود.'
 
 class ApprovalPolicyForm(forms.ModelForm):
     class Meta:
