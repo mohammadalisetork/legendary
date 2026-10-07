@@ -37,7 +37,7 @@ class MultiDepartmentExperienceTests(TestCase):
         response=self.client.get(reverse("service_hub"))
         self.assertContains(response,"اداره الف")
         self.assertNotContains(response,"اداره ب")
-        self.assertContains(response,"1 خانواده خدمت")
+        self.assertContains(response,"1 خانواده · 1 خدمت")
 
     def test_department_landing_and_existing_catalogue_url(self):
         self.client.force_login(self.requester)
