@@ -411,6 +411,7 @@ th { font-weight: 700; font-size: .78rem; letter-spacing: 0.02em; }
 .filter-chip button { min-width: 24px; min-height: 24px; border: 0; border-radius: 50%; background: transparent; color: var(--primary); cursor: pointer; }
 .report-dataset-context { margin: 0; padding-top: 9px; border-top: 1px solid var(--border); color: var(--text-muted); font-size: .8rem; }
 .report-pulse { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin: 14px 0 18px; }
+.report-pulse--expanded { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .report-kpi { display: grid; align-content: start; gap: 6px; min-width: 0; min-height: 132px; padding: 17px 18px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); box-shadow: var(--elevation-surface); color: var(--text-primary); text-decoration: none; transition: border-color var(--motion-fast), transform var(--motion-fast), box-shadow var(--motion-fast); }
 .report-kpi:hover, .report-kpi:focus-visible { transform: translateY(-2px); border-color: var(--primary); box-shadow: var(--elevation-raised); }
 .report-kpi-label { color: var(--text-secondary); font-size: .83rem; font-weight: 700; }
